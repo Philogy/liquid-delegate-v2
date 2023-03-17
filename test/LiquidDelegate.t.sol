@@ -1,179 +1,88 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.17;
+pragma solidity 0.8.17;
 
 import {Test} from "forge-std/Test.sol";
-import {console2} from "forge-std/console2.sol";
-import {MockERC721} from "solmate/test/utils/mocks/MockERC721.sol";
-import {NFTFlashBorrower} from "../src/NFTFlashBorrower.sol";
-import {DelegationRegistry} from "../src/DelegationRegistry.sol";
-import {LiquidDelegate} from "../src/LiquidDelegate.sol";
+import {ItemType, OrderType} from "seaport/lib/ConsiderationEnums.sol";
+import {OrderParameters, ConsiderationItem, OfferItem, Order} from "seaport/lib/ConsiderationStructs.sol";
+import {LiquidDelegateV2} from "src/LiquidDelegateV2.sol";
+import {DelegationRegistry} from "src/DelegationRegistry.sol";
+import {BaseSeaportTest} from "./base/BaseSeaportTest.sol";
+import {SeaportHelpers, User} from "./utils/SeaportHelpers.sol";
+import {MockERC721} from "./mock/MockERC721.sol";
 
-contract LiquidDelegateTest is Test {
-    string public constant baseURI = "test";
-    uint96 public constant interval = 60;
-    address payable public constant ZERO = payable(address(0x0));
-    address payable public constant liquidDelegateOwner = payable(address(0x9));
-    MockERC721 public nft;
-    DelegationRegistry public registry;
-    LiquidDelegate public rights;
+contract LiquidDelegateTest is Test, BaseSeaportTest, SeaportHelpers {
+    LiquidDelegateV2 liquidDelegateV2;
+    DelegationRegistry registry;
+
+    MockERC721 token;
+
+    User user1 = makeUser("user1");
+    User user2 = makeUser("user2");
+    User user3 = makeUser("user3");
 
     function setUp() public {
         registry = new DelegationRegistry();
-        nft = new MockERC721("Test", "TEST");
-        rights = new LiquidDelegate(address(registry), liquidDelegateOwner, baseURI);
-        vm.label(address(registry), "registry");
-        vm.label(address(nft), "nft");
-        vm.label(address(rights), "rights");
-        vm.label(address(this), "test");
+        liquidDelegateV2 = new LiquidDelegateV2(address(registry), address(seaport));
+        token = new MockERC721();
     }
 
-    receive() external payable {}
+    function testWrapOrderFilledByBuyer() public {
+        // Test setup
+        User memory seller = user1;
+        uint256 tokenId = 1;
+        token.mint(seller.addr, tokenId);
+        vm.prank(seller.addr);
+        token.setApprovalForAll(address(conduit), true);
 
-    function _create(address creator, uint256 tokenId, uint96 expiration, address payable referrer)
-        internal
-        returns (uint256 rightsId)
-    {
-        vm.startPrank(creator);
-        nft.mint(creator, tokenId);
-        nft.approve(address(rights), tokenId);
-        // rights.create{value: rights.creationFee()}(address(nft), tokenId, expiration, referrer);
-        rights.create(address(nft), tokenId, expiration, referrer);
-        vm.stopPrank();
-        return rights.nextRightsId() - 1;
+        // Create seller order
+        uint256 expectedETH = 0.3 ether;
+        ConsiderationItem[] memory sellerConsideration = new ConsiderationItem[](2);
+        sellerConsideration[0] = ConsiderationItem({
+            itemType: ItemType.NATIVE,
+            token: address(0),
+            identifierOrCriteria: 0,
+            startAmount: expectedETH,
+            endAmount: expectedETH,
+            recipient: payable(seller.addr)
+        });
+        uint256 receiptId = liquidDelegateV2.getReceiptId(
+            address(token), tokenId, LiquidDelegateV2.ExpiryType.Relative, 30 days, seller.addr
+        );
+        sellerConsideration[1] = ConsiderationItem({
+            itemType: ItemType.ERC721,
+            token: address(liquidDelegateV2),
+            identifierOrCriteria: receiptId,
+            startAmount: 1,
+            endAmount: 1,
+            recipient: payable(seller.addr)
+        });
+        OfferItem[] memory sellerOffer = new OfferItem[](1);
+        sellerOffer[0] = OfferItem({
+            itemType: ItemType.ERC721,
+            token: address(token),
+            identifierOrCriteria: tokenId,
+            startAmount: 1,
+            endAmount: 1
+        });
+        OrderParameters memory sellerOrderParams = OrderParameters({
+            offerer: seller.addr,
+            zone: address(0),
+            offer: sellerOffer,
+            consideration: sellerConsideration,
+            orderType: OrderType.FULL_OPEN,
+            startTime: 0,
+            endTime: block.timestamp + 3 days,
+            zoneHash: bytes32(0),
+            salt: uint256(keccak256("testWrapOrderFilledBySeller.seller.salt")),
+            conduitKey: conduitKey,
+            totalOriginalConsiderationItems: 2
+        });
+        (, bytes32 seaportDomainSeparator,) = seaport.information();
+        bytes memory sellerSignature =
+            signOrder(seller, seaportDomainSeparator, sellerOrderParams, seaport.getCounter(seller.addr));
+
+        // Prepare contract order
     }
 
-    function testCreateOnly(address creator, uint256 tokenId) public {
-        vm.assume(creator != ZERO);
-        uint256 rightsId = _create(creator, tokenId, uint96(block.timestamp) + 60, ZERO);
-        assertEq(rights.ownerOf(rightsId), creator);
-        assertTrue(registry.checkDelegateForToken(creator, address(rights), address(nft), tokenId));
-    }
-
-    // function testCreateAndPayReferrer(address creator, address payable referrer, uint256 tokenId) public {
-    //     vm.assume(creator != ZERO);
-    //     vm.assume(referrer != ZERO);
-    //     vm.assume(creator != referrer);
-    //     assumePayable(referrer);
-    //     vm.prank(liquidDelegateOwner);
-    //     rights.setCreationFee(0.1 ether);
-    //     vm.deal(creator, 100 ether);
-    //     uint256 startBalance = referrer.balance;
-    //     uint256 rightsId = _create(creator, tokenId, uint96(block.timestamp) + 60, referrer);
-    //     assertEq(referrer.balance - startBalance, rights.creationFee() / 2);
-    // }
-
-    function testCreateAndTransfer(address creator, address rightsOwner, uint256 tokenId) public {
-        vm.assume(creator != ZERO);
-        vm.assume(rightsOwner != ZERO);
-        vm.assume(creator != rightsOwner);
-        uint256 rightsId = _create(creator, tokenId, uint96(block.timestamp) + 60, ZERO);
-        vm.prank(creator);
-        rights.transferFrom(creator, rightsOwner, rightsId);
-        assertEq(rights.ownerOf(rightsId), rightsOwner);
-        assertTrue(registry.checkDelegateForToken(rightsOwner, address(rights), address(nft), tokenId));
-        assertFalse(registry.checkDelegateForToken(creator, address(rights), address(nft), tokenId));
-    }
-
-    function testCreateAndRedeem(address creator, address rightsOwner, uint256 tokenId) public {
-        vm.assume(creator != ZERO);
-        vm.assume(rightsOwner != ZERO);
-        vm.assume(creator != rightsOwner);
-        uint256 rightsId = _create(creator, tokenId, uint96(block.timestamp) + interval, ZERO);
-        // Fail to redeem if you don't own it
-        vm.expectRevert(LiquidDelegate.InvalidBurn.selector);
-        vm.prank(address(rightsOwner));
-        rights.burn(rightsId);
-        // Succeed at redeeming if you do
-        vm.prank(creator);
-        rights.burn(rightsId);
-        // Check that token burned
-        vm.expectRevert("NOT_MINTED");
-        rights.ownerOf(rightsId);
-        // Check that delegation reset
-        assertFalse(registry.checkDelegateForToken(creator, address(rights), address(nft), tokenId));
-    }
-
-    function testCreateAndExpire(address creator, address rightsOwner, uint256 tokenId) public {
-        vm.assume(creator != ZERO);
-        vm.assume(rightsOwner != ZERO);
-        vm.assume(creator != rightsOwner);
-        uint256 rightsId = _create(creator, tokenId, uint96(block.timestamp) + interval, ZERO);
-        // Fail to expire before expiration
-        vm.startPrank(creator);
-        rights.transferFrom(creator, rightsOwner, rightsId);
-        vm.expectRevert(LiquidDelegate.InvalidBurn.selector);
-        rights.burn(rightsId);
-        vm.stopPrank();
-        // Succeed at expiring after expiration, let anyone expire
-        vm.warp(uint96(block.timestamp) + interval);
-        vm.prank(rightsOwner);
-        rights.burn(rightsId);
-        // Check that token burned
-        vm.expectRevert("NOT_MINTED");
-        rights.ownerOf(rightsId);
-        // Check that delegation reset
-        assertFalse(registry.checkDelegateForToken(creator, address(rights), address(nft), tokenId));
-    }
-
-    function testCreateAndExtend(address creator, address rightsOwner, uint256 tokenId) public {
-        vm.assume(creator != ZERO);
-        vm.assume(rightsOwner != ZERO);
-        vm.assume(creator != rightsOwner);
-        uint256 rightsId = _create(creator, tokenId, uint96(block.timestamp) + interval, ZERO);
-        // Transfer to buyer
-        vm.startPrank(creator);
-        rights.transferFrom(creator, rightsOwner, rightsId);
-        vm.stopPrank();
-        // Pass expiration, then extend
-        vm.warp(uint96(block.timestamp) + interval);
-        vm.prank(creator);
-        rights.extend(rightsId, uint96(block.timestamp) + interval);
-        // Fail to burn before extended expiration
-        vm.startPrank(creator);
-        vm.expectRevert(LiquidDelegate.InvalidBurn.selector);
-        rights.burn(rightsId);
-        vm.stopPrank();
-        // Now warp and burn successfully
-        vm.warp(uint96(block.timestamp) + interval);
-        vm.startPrank(creator);
-        rights.burn(rightsId);
-        // Check that token burned
-        vm.expectRevert("NOT_MINTED");
-        rights.ownerOf(rightsId);
-        // Check that delegation reset
-        assertFalse(registry.checkDelegateForToken(creator, address(rights), address(nft), tokenId));
-    }
-
-    function testCreateAndFlashloan(address creator, uint256 tokenId) public {
-        vm.assume(creator != ZERO);
-        uint256 rightsId = _create(creator, tokenId, uint96(block.timestamp) + interval, ZERO);
-        NFTFlashBorrower borrower = new NFTFlashBorrower(address(rights));
-        vm.prank(creator);
-        rights.flashLoan(rightsId, borrower, bytes(""));
-    }
-
-    // function testCreateAndClaimFees(address creator, address fundsClaimer, uint256 tokenId) public {
-    //     vm.assume(creator != ZERO);
-    //     vm.assume(fundsClaimer != ZERO);
-    //     vm.assume(creator != fundsClaimer);
-    //     vm.assume(fundsClaimer != liquidDelegateOwner);
-    //     assumePayable(fundsClaimer);
-    //     uint256 startBalance = fundsClaimer.balance;
-    //     vm.prank(liquidDelegateOwner);
-    //     rights.setCreationFee(0.3 ether);
-    //     vm.deal(creator, 100 ether);
-    //     uint256 rightsId = _create(creator, tokenId, uint96(block.timestamp) + interval, ZERO);
-    //     assertEq(address(rights).balance, rights.creationFee());
-    //     vm.prank(liquidDelegateOwner);
-    //     rights.claimFunds(payable(fundsClaimer));
-    //     assertEq(address(rights).balance, 0);
-    //     assertEq(fundsClaimer.balance - startBalance, rights.creationFee());
-    // }
-
-    function testMetadata() public {
-        uint256 tokenId = 5;
-        uint256 rightsId = _create(address(0x1), tokenId, uint96(block.timestamp) + interval, ZERO);
-        string memory metadata = rights.tokenURI(rightsId);
-        console2.log(metadata);
-    }
+    function testWrapOrderFilledBySeller() public {}
 }
