@@ -6,13 +6,14 @@
 	path = lib/openzeppelin-contracts
 	url = https://github.com/openzeppelin/openzeppelin-contracts
 	branch = master
-[submodule "lib/solmate"]
-	path = lib/solmate
-	url = https://github.com/transmissions11/solmate
+[submodule "lib/solady"]
+	path = lib/solady
+	url = https://github.com/vectorized/solady
+	branch = v0.0.84
 [submodule "lib/seaport"]
 	path = lib/seaport
 	url = https://github.com/projectopensea/seaport
-[submodule "lib/solady"]
-	path = lib/solady
-	url = https://github.com/Vectorized/solady
-	branch = v0.0.84
+	branch = 1.5
+[submodule "lib/solmate"]
+	path = lib/solmate
+	url = https://github.com/transmissions11/solmate
