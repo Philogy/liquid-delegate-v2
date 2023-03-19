@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.17;
 
-import {ERC721Holder} from "openzeppelin-contracts/token/ERC721/utils/ERC721Holder.sol";
 import {
     ContractOffererInterface, ReceivedItem, SpentItem, Schema
 } from "seaport/interfaces/ContractOffererInterface.sol";
 import {ItemType} from "seaport/lib/ConsiderationEnums.sol";
 import {ERC721} from "solmate/tokens/ERC721.sol";
+import {EIP712} from "solady/utils/EIP712.sol";
 import {IDelegationRegistry} from "./interfaces/IDelegationRegistry.sol";
 
 /// @author philogy <https://github.com/philogy>
 /// @dev V2 of Liquid Delegate, also acts as SeaPort Zone
-contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2", "RIGHTSV2"), ERC721Holder {
+contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2", "RIGHTSV2"), EIP712 {
+    enum ReceiptType {
+        Depositor,
+        Recipient
+    }
+
     enum ExpiryType {
         Relative,
         Absolute
@@ -35,6 +40,7 @@ contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2
     error NotSeaport();
 
     uint256 internal constant EMPTY_ID_PLACEHOLDER = 1;
+    uint256 internal constant LD_SIP_CONTEXT_VERSION = 0xff;
 
     uint256 internal newWrappedTokenId = EMPTY_ID_PLACEHOLDER;
     uint256 internal validatedReceiptId = EMPTY_ID_PLACEHOLDER;
@@ -47,6 +53,8 @@ contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2
     constructor(address _SEAPORT, address _DELEGATION_REGISTRY) {
         SEAPORT = _SEAPORT;
         DELEGATION_REGISTRY = IDelegationRegistry(_DELEGATION_REGISTRY);
+        (string memory eip712Name, ) = _domainNameAndVersion();
+        assert(keccak256(bytes(eip712Name)) == keccak256(bytes(name)));
     }
 
     // TODO: Remove
@@ -136,6 +144,10 @@ contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2
         return uint256(keccak256(abi.encode(_contract, _tokenId, _expiryType, _expiryTime, _depositor)));
     }
 
+    function _domainNameAndVersion() internal pure override returns (string memory, string memory) {
+        return ("LiquidDelegate V2", "1.0");
+    }
+
     function _wrapAsOrder(address _caller, SpentItem[] calldata _inSpends, bytes calldata _context)
         internal
         view
@@ -182,9 +194,11 @@ contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2
     function _decodeContext(bytes calldata _context) internal pure returns (ExpiryType, uint256, address) {
         if (_context.length != 0x20 * 3 + 1) revert InvalidContextSize();
         uint256 versionByte;
+        ReceiptType receiptType;
         assembly {
             versionByte := shr(248, calldataload(_context.offset))
         }
+        /* if (versionByte != LD_SIP_CONTEXT_VERSION) revert InvalidSIP6Version(); */
         if (versionByte != 0x01) revert InvalidSIP6Version();
         return abi.decode(_context[1:], (ExpiryType, uint256, address));
     }
