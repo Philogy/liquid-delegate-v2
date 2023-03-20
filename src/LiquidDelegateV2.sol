@@ -7,14 +7,17 @@ import {
 import {ItemType} from "seaport/lib/ConsiderationEnums.sol";
 import {ERC721} from "solmate/tokens/ERC721.sol";
 import {EIP712} from "solady/utils/EIP712.sol";
+import {SignatureCheckerLib} from "solady/utils/SignatureCheckerLib.sol";
 import {IDelegationRegistry} from "./interfaces/IDelegationRegistry.sol";
 
 /// @author philogy <https://github.com/philogy>
 /// @dev V2 of Liquid Delegate, also acts as SeaPort Zone
 contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2", "RIGHTSV2"), EIP712 {
     enum ReceiptType {
-        Depositor,
-        Recipient
+        DepositorOpen,
+        RecipientOpen,
+        DepositorClosed,
+        RecipientClosed
     }
 
     enum ExpiryType {
@@ -22,28 +25,42 @@ contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2
         Absolute
     }
 
+    // TODO: Better names for users
+    bytes32 internal constant RELATIVE_EXPIRY_TYPE_HASH = keccak256("Relative");
+    bytes32 internal constant ABSOLUTE_EXPIRY_TYPE_HASH = keccak256("Absolute");
+
     struct Rights {
-        address contract_;
+        address tokenContract;
         uint96 expiry;
         uint256 tokenId;
     }
 
-    error InvalidContextSize();
     error InvalidSIP6Version();
     error MissingInToken();
     error InvalidInToken();
     error ReceiptAlreadyInOffer();
     error ExpiryLarger96Bits();
-    error EmptyID();
+    error EmptyIDTransfer();
     error FailedToWrap();
     error CannotWrapUnowned();
     error NotSeaport();
+    error InvalidReceiptType();
+    error InvalidExpiryType();
+    error InvalidReceiptSignature();
+    error ExpiryTimeNotInFuture();
 
-    uint256 internal constant EMPTY_ID_PLACEHOLDER = 1;
-    uint256 internal constant LD_SIP_CONTEXT_VERSION = 0xff;
+    event WrappedToken(
+        uint256 indexed wrappedTokenId, address tokenContract, uint256 tokenId, uint256 expiry, address depositor
+    );
 
-    uint256 internal newWrappedTokenId = EMPTY_ID_PLACEHOLDER;
-    uint256 internal validatedReceiptId = EMPTY_ID_PLACEHOLDER;
+    uint256 internal constant EMPTY_RECEIPT_PLACEHOLDER = 1;
+    uint256 internal constant LD_SIP_CONTEXT_VERSION = 0x01;
+
+    bytes32 internal constant RECEIPT_TYPE_HASH = keccak256(
+        "WrapReceipt(address token,uint256 id,string expiryType,uint256 expiryTime,address depositor,address recipient)"
+    );
+
+    uint256 internal validatedReceiptId = EMPTY_RECEIPT_PLACEHOLDER;
 
     mapping(uint256 => Rights) public idsToRights;
 
@@ -53,27 +70,34 @@ contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2
     constructor(address _SEAPORT, address _DELEGATION_REGISTRY) {
         SEAPORT = _SEAPORT;
         DELEGATION_REGISTRY = IDelegationRegistry(_DELEGATION_REGISTRY);
-        (string memory eip712Name, ) = _domainNameAndVersion();
+        (string memory eip712Name,) = _domainNameAndVersion();
         assert(keccak256(bytes(eip712Name)) == keccak256(bytes(name)));
     }
 
     // TODO: Remove
     function generateOrder(
-        address,
+        address _fulfiller,
         // What LiquidDelegate is giving up
         SpentItem[] calldata,
         // What LiquidDelegate is receiving
         SpentItem[] calldata _inSpends,
         bytes calldata _context // encoded based on the schemaID
-    ) external returns (SpentItem[] memory offer, ReceivedItem[] memory consideration) {
-        address contract_;
-        uint256 tokenId;
-        uint256 expiry;
-        uint256 wrappedTokenId;
-        (offer, consideration, wrappedTokenId, validatedReceiptId, contract_, tokenId, expiry) =
-            _wrapAsOrder(msg.sender, _inSpends, _context);
-        idsToRights[wrappedTokenId] = Rights({contract_: contract_, expiry: uint96(expiry), tokenId: tokenId});
-        newWrappedTokenId = wrappedTokenId;
+    ) external returns (SpentItem[] memory, ReceivedItem[] memory) {
+        (
+            SpentItem[] memory offer,
+            ReceivedItem[] memory consideration,
+            address recipient,
+            bytes32 validatedReceiptHash,
+            address tokenContract,
+            uint256 tokenId,
+            uint256 expiry,
+            address depositor
+        ) = _wrapAsOrder(_fulfiller, msg.sender, _inSpends, _context);
+        validatedReceiptId = uint256(validatedReceiptHash);
+
+        _mint(recipient, tokenContract, tokenId, expiry, depositor);
+
+        return (offer, consideration);
     }
 
     function ratifyOrder(
@@ -83,22 +107,21 @@ contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2
         bytes32[] calldata,
         uint256
     ) external returns (bytes4) {
-        // Reset receipt incase it wasn't required.
-        validatedReceiptId = EMPTY_ID_PLACEHOLDER;
-        if (newWrappedTokenId != EMPTY_ID_PLACEHOLDER) revert FailedToWrap();
+        // Reset receipt incase it wasn't used.
+        validatedReceiptId = EMPTY_RECEIPT_PLACEHOLDER;
         return this.ratifyOrder.selector;
     }
 
     function previewOrder(
         address _caller,
-        address,
+        address _fulfiller,
         // What LiquidDelegate is giving up
         SpentItem[] calldata,
         // What LiquidDelegate is receiving
         SpentItem[] calldata _inSpends,
         bytes calldata _context // encoded based on the schemaID
     ) public view returns (SpentItem[] memory offer, ReceivedItem[] memory consideration) {
-        (offer, consideration,,,,,) = _wrapAsOrder(_caller, _inSpends, _context);
+        (offer, consideration,,,,,,) = _wrapAsOrder(_fulfiller, _caller, _inSpends, _context);
     }
 
     function getSeaportMetadata() external pure returns (string memory, Schema[] memory) {
@@ -108,98 +131,188 @@ contract LiquidDelegateV2 is ContractOffererInterface, ERC721("LiquidDelegate V2
 
     function transferFrom(address _from, address _to, uint256 _tokenId) public override {
         if (_from == address(this)) {
-            if (_tokenId == EMPTY_ID_PLACEHOLDER) revert EmptyID();
+            if (_tokenId == EMPTY_RECEIPT_PLACEHOLDER) revert EmptyIDTransfer();
 
-            if (_tokenId == newWrappedTokenId) {
-                Rights memory rights = idsToRights[_tokenId];
-                DELEGATION_REGISTRY.delegateForToken(_to, rights.contract_, rights.tokenId, true);
-                if (ERC721(rights.contract_).ownerOf(rights.tokenId) != address(this)) revert CannotWrapUnowned();
-                _mint(_to, _tokenId);
-                newWrappedTokenId = EMPTY_ID_PLACEHOLDER;
-            } else if (_tokenId == validatedReceiptId) {
-                validatedReceiptId = EMPTY_ID_PLACEHOLDER;
+            if (_tokenId == validatedReceiptId) {
+                validatedReceiptId = EMPTY_RECEIPT_PLACEHOLDER;
+                return;
             }
-
-            return;
         }
 
-        Rights memory rights = idsToRights[_tokenId];
-        DELEGATION_REGISTRY.delegateForToken(_from, rights.contract_, rights.tokenId, false);
-        DELEGATION_REGISTRY.delegateForToken(_to, rights.contract_, rights.tokenId, true);
-
         super.transferFrom(_from, _to, _tokenId);
+
+        Rights memory rights = idsToRights[_tokenId];
+        DELEGATION_REGISTRY.delegateForToken(_from, rights.tokenContract, rights.tokenId, false);
+        DELEGATION_REGISTRY.delegateForToken(_to, rights.tokenContract, rights.tokenId, true);
     }
 
     function tokenURI(uint256) public view override returns (string memory) {
+        balanceOf(address(0));
         return "";
     }
 
-    function getReceiptId(
-        address _contract,
-        uint256 _tokenId,
-        ExpiryType _expiryType,
-        uint256 _expiryTime,
-        address _depositor
-    ) public pure returns (uint256) {
-        return uint256(keccak256(abi.encode(_contract, _tokenId, _expiryType, _expiryTime, _depositor)));
+    function DOMAIN_SEPARATOR() external view returns (bytes32) {
+        return _domainSeparator();
+    }
+
+    function _mint(address _recipient, address _tokenContract, uint256 _tokenId, uint256 _expiry, address _depositor)
+        internal
+    {
+        uint256 wrappedTokenId = uint256(keccak256(abi.encode(_tokenContract, _tokenId, _expiry, _depositor)));
+
+        idsToRights[wrappedTokenId] =
+            Rights({tokenContract: _tokenContract, expiry: uint96(_expiry), tokenId: _tokenId});
+
+        _mint(_recipient, wrappedTokenId);
+        emit WrappedToken(wrappedTokenId, _tokenContract, _tokenId, _expiry, _depositor);
     }
 
     function _domainNameAndVersion() internal pure override returns (string memory, string memory) {
         return ("LiquidDelegate V2", "1.0");
     }
 
-    function _wrapAsOrder(address _caller, SpentItem[] calldata _inSpends, bytes calldata _context)
+    function _wrapAsOrder(address _fulfiller, address _caller, SpentItem[] calldata _inSpends, bytes calldata _context)
         internal
         view
         returns (
             SpentItem[] memory offer,
             ReceivedItem[] memory consideration,
-            uint256 ldTokenId,
-            uint256 receiptId,
-            address contract_,
+            address recipient,
+            bytes32 receiptHash,
+            address tokenContract,
             uint256 tokenId,
-            uint256 expiry
+            uint256 expiry,
+            address depositor
         )
     {
         if (_caller != address(SEAPORT)) revert NotSeaport();
 
-        (ExpiryType expiryType, uint256 expiryTime, address depositor) = _decodeContext(_context);
-        expiry = expiryType == ExpiryType.Relative ? block.timestamp + expiryTime : expiryTime;
-        if (expiry > type(uint96).max) revert ExpiryLarger96Bits();
-
-        // Valid token to be wrapped
+        // Get token to be wrapped
         if (_inSpends.length == 0) revert MissingInToken();
         SpentItem calldata inItem = _inSpends[0];
         if (inItem.amount != 1 || inItem.itemType != ItemType.ERC721) revert InvalidInToken();
-        contract_ = inItem.token;
+        tokenContract = inItem.token;
         tokenId = inItem.identifier;
 
-        ldTokenId = uint256(keccak256(abi.encode(contract_, tokenId, expiry, depositor)));
-        receiptId = getReceiptId(contract_, tokenId, expiryType, expiryTime, depositor);
+        (receiptHash, depositor, recipient, expiry) =
+            _validateAndExtractContext(_fulfiller, tokenContract, tokenId, _context);
 
-        offer = new SpentItem[](2);
-        offer[0] = SpentItem({itemType: ItemType.ERC721, token: address(this), identifier: ldTokenId, amount: 1});
-        offer[1] = SpentItem({itemType: ItemType.ERC721, token: address(this), identifier: receiptId, amount: 1});
+        offer = new SpentItem[](1);
+        offer[0] =
+            SpentItem({itemType: ItemType.ERC721, token: address(this), identifier: uint256(receiptHash), amount: 1});
 
         consideration = new ReceivedItem[](1);
         consideration[0] = ReceivedItem({
             itemType: ItemType.ERC721,
-            token: contract_,
+            token: tokenContract,
             identifier: tokenId,
             amount: 1,
             recipient: payable(address(this))
         });
     }
 
-    function _decodeContext(bytes calldata _context) internal pure returns (ExpiryType, uint256, address) {
-        if (_context.length != 0x20 * 3 + 1) revert InvalidContextSize();
-        uint256 versionByte;
-        ReceiptType receiptType;
-        assembly {
-            versionByte := shr(248, calldataload(_context.offset))
+    function getContext(
+        ReceiptType _receiptType,
+        ExpiryType _expiryType,
+        uint80 _expiryValue,
+        address _actor,
+        bytes calldata _sig
+    ) public pure returns (bytes memory) {
+        bytes32 packedData = bytes32(abi.encodePacked(_receiptType, _expiryType, _expiryValue, _actor));
+        return abi.encodePacked(uint8(LD_SIP_CONTEXT_VERSION), abi.encode(packedData, _sig));
+    }
+
+    /// @dev Builds unique ERC-712 struct hash
+    function getReceiptHash(
+        address _depositor,
+        address _recipient,
+        address _token,
+        uint256 _id,
+        ExpiryType _expiryType,
+        uint256 _expiryValue
+    ) public view returns (bytes32 receiptHash, uint256 expiryTimestamp) {
+        bytes32 expiryTypeHash;
+        if (_expiryType == ExpiryType.Relative) {
+            expiryTypeHash = RELATIVE_EXPIRY_TYPE_HASH;
+            expiryTimestamp = block.timestamp + _expiryValue;
+        } else if (_expiryType == ExpiryType.Absolute) {
+            expiryTypeHash = ABSOLUTE_EXPIRY_TYPE_HASH;
+        } else {
+            // Incase another enum type accidentally added
+            revert InvalidExpiryType();
         }
-        /* if (versionByte != LD_SIP_CONTEXT_VERSION) revert InvalidSIP6Version(); */
-        if (versionByte != 0x01) revert InvalidSIP6Version();
-        return abi.decode(_context[1:], (ExpiryType, uint256, address));
+
+        receiptHash =
+            keccak256(abi.encode(RECEIPT_TYPE_HASH, _token, _id, expiryTypeHash, _expiryValue, _depositor, _recipient));
+    }
+
+    function _validateAndExtractContext(address _fulfiller, address _token, uint256 _id, bytes calldata _context)
+        internal
+        view
+        returns (bytes32 receiptHash, address depositor, address recipient, uint256 expiry)
+    {
+        // Load and check SIP-6 version byte
+        uint256 versionByte;
+        assembly {
+            versionByte := byte(0, calldataload(_context.offset))
+        }
+        if (versionByte != LD_SIP_CONTEXT_VERSION) revert InvalidSIP6Version();
+        // Decode context
+        (bytes32 packedData, bytes memory sig) = abi.decode(_context[1:], (bytes32, bytes));
+        ReceiptType receiptType;
+        ExpiryType expiryType;
+        uint256 expiryValue;
+        address actor;
+        assembly {
+            // receiptType = packedData[0:1]
+            receiptType := byte(0, packedData)
+            // expiryType = packedData[1:2]
+            expiryType := byte(1, packedData)
+            // expiryValue = packedData[2:12]
+            expiryValue := and(shr(160, packedData), 0xffffffffffffffffffff)
+            // actor = packedData[12:32]
+            // Leave upper bits dirty, Solidity/Solady will clean.
+            // Solady.SignatureCheckerLib will return false if actor == 0.
+            actor := packedData
+        }
+
+        // Verify actor signature.
+        {
+            address commitedDepositor;
+            address commitedRecipient;
+
+            if (receiptType == ReceiptType.DepositorOpen) {
+                commitedDepositor = actor;
+                depositor = actor;
+                recipient = _fulfiller;
+            } else if (receiptType == ReceiptType.RecipientOpen) {
+                commitedRecipient = actor;
+                depositor = _fulfiller;
+                recipient = actor;
+            } else if (receiptType == ReceiptType.DepositorClosed) {
+                commitedDepositor = actor;
+                commitedRecipient = _fulfiller;
+                depositor = actor;
+                recipient = _fulfiller;
+            } else if (receiptType == ReceiptType.RecipientClosed) {
+                commitedDepositor = _fulfiller;
+                commitedRecipient = actor;
+                depositor = _fulfiller;
+                recipient = actor;
+            } else {
+                // Incase another enum type accidentally added
+                revert InvalidReceiptType();
+            }
+
+            // Require signed receipt to make sure users see receipt parameters when creating order.
+            (receiptHash, expiry) =
+                getReceiptHash(commitedDepositor, commitedRecipient, _token, _id, expiryType, expiryValue);
+
+            if (!SignatureCheckerLib.isValidSignatureNow(actor, _hashTypedData(receiptHash), sig)) {
+                revert InvalidReceiptSignature();
+            }
+        }
+
+        if (block.timestamp >= expiry) revert ExpiryTimeNotInFuture();
     }
 }

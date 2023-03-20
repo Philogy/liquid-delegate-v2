@@ -4,6 +4,7 @@ out = 'out'
 libs = ['lib']
 solc_version = '0.8.17'
 optimizer_runs = 0xffffffff
+viaIR = true
 
 [fuzz]
 # runs = 250000

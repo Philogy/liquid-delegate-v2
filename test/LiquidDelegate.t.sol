@@ -54,15 +54,25 @@ contract LiquidDelegateTest is Test, BaseSeaportTest, SeaportHelpers {
 
         // Create seller order
         LiquidDelegateV2.ExpiryType expiryType = LiquidDelegateV2.ExpiryType.Relative;
-        uint256 expiryTime = 30 days;
-        uint256 receiptId = liquidDelegateV2.getReceiptId(address(token), tokenId, expiryType, expiryTime, seller.addr);
+        uint256 expiryValue = 30 days;
+        (bytes32 receiptHash,) =
+            liquidDelegateV2.getReceiptHash(seller.addr, address(0), address(token), tokenId, expiryType, expiryValue);
+
+        bytes memory receiptSig = signERC712(seller, liquidDelegateV2.DOMAIN_SEPARATOR(), receiptHash);
 
         AdvancedOrder[] memory orders = new AdvancedOrder[](3);
 
-        orders[0] = _createSellerOrder(seller, tokenId, receiptId, expectedETH, true);
+        orders[0] = _createSellerOrder(seller, tokenId, uint256(receiptHash), expectedETH, true);
 
         // Create contract order
-        orders[1] = _createDelegateContractOrder(seller.addr, tokenId, receiptId, expiryType, expiryTime);
+        orders[1] = _createDelegateContractOrder(
+            seller.addr,
+            tokenId,
+            uint256(receiptHash),
+            liquidDelegateV2.getContext(
+                LiquidDelegateV2.ReceiptType.DepositorOpen, expiryType, uint80(expiryValue), seller.addr, receiptSig
+            )
+        );
 
         // Create buyer order
         orders[2] = _createBuyerOrder(buyer, 0, expectedETH, false);
@@ -81,9 +91,7 @@ contract LiquidDelegateTest is Test, BaseSeaportTest, SeaportHelpers {
         // Seller NFT => Liquid Delegate V2
         fulfillments[0] = _constructFulfillment(0, 0, 1, 0);
         // Wrap Receipt => Seller
-        fulfillments[1] = _constructFulfillment(1, 1, 0, 1);
-        /* // Wrap Token => Buyer
-        fulfillments[2] = _constructFulfillment(1, 0, 2, 0); */
+        fulfillments[1] = _constructFulfillment(1, 0, 0, 1);
         // Buyer ETH => Seller
         fulfillments[2] = _constructFulfillment(2, 0, 0, 0);
 
@@ -154,18 +162,10 @@ contract LiquidDelegateTest is Test, BaseSeaportTest, SeaportHelpers {
         address _depositor,
         uint256 _tokenId,
         uint256 _receiptId,
-        LiquidDelegateV2.ExpiryType _expiryType,
-        uint256 _expiryTime
+        bytes memory _context
     ) internal view returns (AdvancedOrder memory) {
-        OfferItem[] memory offer = new OfferItem[](2);
+        OfferItem[] memory offer = new OfferItem[](1);
         offer[0] = OfferItem({
-            itemType: ItemType.ERC721_WITH_CRITERIA,
-            token: address(liquidDelegateV2),
-            identifierOrCriteria: 0,
-            startAmount: 1,
-            endAmount: 1
-        });
-        offer[1] = OfferItem({
             itemType: ItemType.ERC721,
             token: address(liquidDelegateV2),
             identifierOrCriteria: _receiptId,
@@ -194,13 +194,8 @@ contract LiquidDelegateTest is Test, BaseSeaportTest, SeaportHelpers {
             conduitKey: conduitKey,
             totalOriginalConsiderationItems: 1
         });
-        return AdvancedOrder({
-            parameters: orderParams,
-            numerator: 1,
-            denominator: 1,
-            signature: "",
-            extraData: abi.encodePacked(uint8(0x01), abi.encode(_expiryType, _expiryTime, _depositor))
-        });
+        return
+            AdvancedOrder({parameters: orderParams, numerator: 1, denominator: 1, signature: "", extraData: _context});
     }
 
     function _createBuyerOrder(User memory _user, uint256 _receiptId, uint256 _expectedETH, bool _expectReceipt)
