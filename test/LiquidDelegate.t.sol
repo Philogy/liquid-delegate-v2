@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.17;
 
 import {Test} from "forge-std/Test.sol";
@@ -12,15 +12,18 @@ import {
     Fulfillment,
     FulfillmentComponent
 } from "seaport/lib/ConsiderationStructs.sol";
+import {LibRLP} from "solady/utils/LibRLP.sol";
 import {LiquidDelegateV2} from "src/LiquidDelegateV2.sol";
+import {PrincipalToken} from "src/PrincipalToken.sol";
 import {DelegationRegistry} from "src/DelegationRegistry.sol";
 import {BaseSeaportTest} from "./base/BaseSeaportTest.sol";
 import {SeaportHelpers, User} from "./utils/SeaportHelpers.sol";
 import {MockERC721} from "./mock/MockERC721.sol";
 
 contract LiquidDelegateTest is Test, BaseSeaportTest, SeaportHelpers {
-    LiquidDelegateV2 liquidDelegateV2;
     DelegationRegistry registry;
+    LiquidDelegateV2 liquidDelegateV2;
+    PrincipalToken principalToken;
 
     MockERC721 token;
 
@@ -28,9 +31,34 @@ contract LiquidDelegateTest is Test, BaseSeaportTest, SeaportHelpers {
     User user2 = makeUser("user2");
     User user3 = makeUser("user3");
 
+    address ldOwner = makeAddr("LiquidDelegateV2_OWNER");
+    address coreDeployer = makeAddr("core_deployer");
+    address uniswapRouter = makeAddr("UNISWAP_UNIVERSAL_ROUTER");
+
     function setUp() public {
         registry = new DelegationRegistry();
-        liquidDelegateV2 = new LiquidDelegateV2(address(seaport), address(registry) );
+
+        vm.startPrank(coreDeployer);
+        liquidDelegateV2 = new LiquidDelegateV2(
+            address(seaport),
+            address(registry),
+            address(conduit),
+            uniswapRouter,
+            LibRLP.computeAddress(coreDeployer, vm.getNonce(coreDeployer) + 1),
+            "",
+            ldOwner
+        );
+
+        principalToken = new PrincipalToken(
+            address(liquidDelegateV2),
+            address(seaport),
+    address(conduit),
+            uniswapRouter
+        );
+        vm.stopPrank();
+        assertEq(principalToken.LD_CONTROLLER(), address(liquidDelegateV2));
+        assertEq(address(liquidDelegateV2.PRINCIPAL_TOKEN()), address(principalToken));
+
         token = new MockERC721();
     }
 
@@ -252,7 +280,7 @@ contract LiquidDelegateTest is Test, BaseSeaportTest, SeaportHelpers {
         });
     }
 
-    function _signOrder(User memory _user, OrderParameters memory _params) internal returns (bytes memory) {
+    function _signOrder(User memory _user, OrderParameters memory _params) internal view returns (bytes memory) {
         (, bytes32 seaportDomainSeparator,) = seaport.information();
         return signOrder(_user, seaportDomainSeparator, _params, seaport.getCounter(_user.addr));
     }
