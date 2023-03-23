@@ -9,7 +9,7 @@ import {LibString} from "solady/utils/LibString.sol";
 import {Base64} from "solady/utils/Base64.sol";
 
 /// @author philogy <https://github.com/philogy>
-abstract contract LDMetadataManager is ERC2981, ContractOffererInterface, Owned {
+abstract contract LDMetadataManager is ERC2981, Owned {
     using LibString for address;
     using LibString for uint256;
 

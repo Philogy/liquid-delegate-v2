@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.17;
 
-import {ERC721TokenReceiver} from "solmate/tokens/ERC721.sol";
+import {IERC721Receiver} from "openzeppelin-contracts/token/ERC721/IERC721Receiver.sol";
+import {IERC721} from "openzeppelin-contracts/token/ERC721/IERC721.sol";
 import {Bool256Lib} from "./Bool256Lib.sol";
 
 /// @author philogy <https://github.com/philogy>
-/// @author Adapted from solmate's ERC721
-abstract contract BaseERC721 {
+/// @author Adapted from solmate's [ERC721](https://github.com/transmissions11/solmate/blob/main/src/tokens/ERC721.sol)
+abstract contract BaseERC721 is IERC721 {
     using Bool256Lib for uint256;
 
     error ZeroAddress();
@@ -18,17 +19,7 @@ abstract contract BaseERC721 {
     error NotMinted();
 
     /*//////////////////////////////////////////////////////////////
-                                 EVENTS
-    //////////////////////////////////////////////////////////////*/
-
-    event Transfer(address indexed from, address indexed to, uint256 indexed id);
-
-    event Approval(address indexed owner, address indexed spender, uint256 indexed id);
-
-    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
-
-    /*//////////////////////////////////////////////////////////////
-                         METADATA STORAGE/LOGIC
+                         METADATA LOGIC
     //////////////////////////////////////////////////////////////*/
 
     function name() public view virtual returns (string memory);
@@ -242,8 +233,8 @@ abstract contract BaseERC721 {
     function _checkReceiver(address to, address from, uint256 id, bytes memory data) internal virtual {
         if (
             to.code.length != 0
-                && ERC721TokenReceiver(to).onERC721Received(msg.sender, from, id, data)
-                    != ERC721TokenReceiver.onERC721Received.selector
+                && IERC721Receiver(to).onERC721Received(msg.sender, from, id, data)
+                    != IERC721Receiver.onERC721Received.selector
         ) {
             revert UnsafeRecipient();
         }
