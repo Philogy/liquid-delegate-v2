@@ -2,300 +2,189 @@
 pragma solidity 0.8.17;
 
 import {Test} from "forge-std/Test.sol";
-import {ItemType, OrderType, Side} from "seaport/lib/ConsiderationEnums.sol";
-import {
-    OrderParameters,
-    ConsiderationItem,
-    OfferItem,
-    AdvancedOrder,
-    CriteriaResolver,
-    Fulfillment,
-    FulfillmentComponent
-} from "seaport/lib/ConsiderationStructs.sol";
 import {LibRLP} from "solady/utils/LibRLP.sol";
-import {LiquidDelegateV2} from "src/LiquidDelegateV2.sol";
+import {LibString} from "solady/utils/LibString.sol";
+import {LiquidDelegateV2, ExpiryType, Rights} from "src/LiquidDelegateV2.sol";
 import {PrincipalToken} from "src/PrincipalToken.sol";
 import {DelegationRegistry} from "src/DelegationRegistry.sol";
-import {BaseSeaportTest} from "./base/BaseSeaportTest.sol";
-import {SeaportHelpers, User} from "./utils/SeaportHelpers.sol";
 import {MockERC721} from "./mock/MockERC721.sol";
 
-contract LiquidDelegateTest is Test, BaseSeaportTest, SeaportHelpers {
-    DelegationRegistry registry;
-    LiquidDelegateV2 liquidDelegateV2;
-    PrincipalToken principalToken;
+contract LiquidDelegateTest is Test {
+    using LibString for uint256;
 
+    // Environment contracts.
+    DelegationRegistry registry;
+    LiquidDelegateV2 ld;
+    PrincipalToken principal;
     MockERC721 token;
 
-    User user1 = makeUser("user1");
-    User user2 = makeUser("user2");
-    User user3 = makeUser("user3");
+    // Test actors.
+    address coreDeployer = makeAddr("coreDeployer");
+    address ldOwner = makeAddr("ldOwner");
 
-    address ldOwner = makeAddr("LiquidDelegateV2_OWNER");
-    address coreDeployer = makeAddr("core_deployer");
-    address uniswapRouter = makeAddr("UNISWAP_UNIVERSAL_ROUTER");
+    address seaport = makeAddr("seaport");
+    address conduit = makeAddr("conduit");
+    address urouter = makeAddr("urouter");
+
+    uint256 internal constant TOTAL_USERS = 100;
+    address[TOTAL_USERS] internal users;
 
     function setUp() public {
         registry = new DelegationRegistry();
 
         vm.startPrank(coreDeployer);
-        liquidDelegateV2 = new LiquidDelegateV2(
-            address(seaport),
+        ld = new LiquidDelegateV2(
             address(registry),
-            address(conduit),
-            uniswapRouter,
+            seaport,
+            conduit,
+            urouter,
             LibRLP.computeAddress(coreDeployer, vm.getNonce(coreDeployer) + 1),
             "",
             ldOwner
         );
-
-        principalToken = new PrincipalToken(
-            address(liquidDelegateV2),
-            address(seaport),
-    address(conduit),
-            uniswapRouter
+        principal = new PrincipalToken(
+            address(ld),
+            seaport,
+            conduit,
+            urouter
         );
         vm.stopPrank();
-        assertEq(principalToken.LD_CONTROLLER(), address(liquidDelegateV2));
-        assertEq(address(liquidDelegateV2.PRINCIPAL_TOKEN()), address(principalToken));
 
         token = new MockERC721();
+
+        for (uint256 i; i < TOTAL_USERS; i++) {
+            users[i] = makeAddr(string.concat("user", (i + 1).toString()));
+        }
     }
 
-    function testWrapOrderFilledByBuyer() public {
-        emit log_named_address("address(conduit)", address(conduit));
-        emit log_named_address("address(liquidDelegateV2)", address(liquidDelegateV2));
+    function test_fuzzingCreateRights(
+        address tokenOwner,
+        address ldTo,
+        address notLdTo,
+        address principalTo,
+        uint256 tokenId,
+        bool expiryTypeRelative,
+        uint256 time
+    ) public {
+        vm.assume(tokenOwner != address(0));
+        vm.assume(ldTo != address(0));
+        vm.assume(principalTo != address(0));
+        vm.assume(notLdTo != ldTo);
 
-        // Test setup
-        User memory seller = user1;
-        vm.label(seller.addr, "seller");
-        User memory buyer = user2;
-        vm.label(buyer.addr, "buyer");
+        (ExpiryType expiryType, uint256 expiry, uint256 expiryValue) = prepareValidExpiry(expiryTypeRelative, time);
 
-        uint256 expectedETH = 0.3 ether;
-        uint256 tokenId = 69;
-        token.mint(seller.addr, tokenId);
-        vm.prank(seller.addr);
-        token.setApprovalForAll(address(conduit), true);
+        token.mint(tokenOwner, tokenId);
+        vm.startPrank(tokenOwner);
+        token.setApprovalForAll(address(ld), true);
 
-        vm.deal(buyer.addr, expectedETH);
+        uint256 rightsId = ld.create(ldTo, principalTo, address(token), tokenId, expiryType, expiryValue);
 
-        // Create seller order
-        LiquidDelegateV2.ExpiryType expiryType = LiquidDelegateV2.ExpiryType.Relative;
-        uint256 expiryValue = 30 days;
-        (bytes32 receiptHash,) =
-            liquidDelegateV2.getReceiptHash(seller.addr, address(0), address(token), tokenId, expiryType, expiryValue);
+        vm.stopPrank();
 
-        bytes memory receiptSig = signERC712(seller, liquidDelegateV2.DOMAIN_SEPARATOR(), receiptHash);
+        assertEq(ld.ownerOf(rightsId), ldTo);
+        assertEq(principal.ownerOf(rightsId), principalTo);
 
-        AdvancedOrder[] memory orders = new AdvancedOrder[](3);
+        (uint256 baseRightsId, Rights memory rights) = ld.getRights(rightsId);
+        assertEq(baseRightsId, ld.getBaseRightsId(address(token), tokenId));
+        assertEq(uint256(bytes32(bytes25(bytes32(rightsId)))), baseRightsId);
+        assertEq(rights.nonce, 0);
+        assertEq(rights.tokenContract, address(token));
+        assertEq(rights.tokenId, tokenId);
+        assertEq(rights.expiry, expiry);
 
-        orders[0] = _createSellerOrder(seller, tokenId, uint256(receiptHash), expectedETH, true);
+        assertTrue(registry.checkDelegateForToken(ldTo, address(ld), address(token), tokenId));
+        assertFalse(registry.checkDelegateForToken(notLdTo, address(ld), address(token), tokenId));
+    }
 
-        // Create contract order
-        orders[1] = _createDelegateContractOrder(
-            seller.addr,
-            tokenId,
-            uint256(receiptHash),
-            liquidDelegateV2.getContext(
-                LiquidDelegateV2.ReceiptType.DepositorOpen, expiryType, uint80(expiryValue), seller.addr, receiptSig
+    function test_fuzzingTransferDelegation(
+        address from,
+        address to,
+        uint256 underlyingTokenId,
+        bool expiryTypeRelative,
+        uint256 time
+    ) public {
+        vm.assume(from != address(0));
+        vm.assume(to != address(0));
+
+        (ExpiryType expiryType,, uint256 expiryValue) = prepareValidExpiry(expiryTypeRelative, time);
+        token.mint(address(ld), underlyingTokenId);
+
+        vm.prank(from);
+        uint256 rightsId = ld.mint(from, from, address(token), underlyingTokenId, expiryType, expiryValue);
+
+        vm.prank(from);
+        ld.transferFrom(from, to, rightsId);
+
+        assertTrue(registry.checkDelegateForToken(to, address(ld), address(token), underlyingTokenId));
+
+        if (from != to) {
+            assertFalse(registry.checkDelegateForToken(from, address(ld), address(token), underlyingTokenId));
+        }
+    }
+
+    function test_fuzzingCannotCreateWithoutToken(
+        address minter,
+        uint256 tokenId,
+        bool expiryTypeRelative,
+        uint256 time
+    ) public {
+        vm.assume(minter != address(0));
+        (ExpiryType expiryType,, uint256 expiryValue) = prepareValidExpiry(expiryTypeRelative, time);
+
+        vm.startPrank(minter);
+        vm.expectRevert();
+        ld.create(minter, minter, address(token), tokenId, expiryType, expiryValue);
+        vm.stopPrank();
+    }
+
+    function test_fuzzingCannotCreateWithNonexistentContract(
+        address minter,
+        address tokenContract,
+        uint256 tokenId,
+        bool expiryTypeRelative,
+        uint256 time
+    ) public {
+        vm.assume(minter != address(0));
+        vm.assume(tokenContract.code.length == 0);
+
+        (ExpiryType expiryType,, uint256 expiryValue) = prepareValidExpiry(expiryTypeRelative, time);
+
+        vm.startPrank(minter);
+        vm.expectRevert();
+        ld.create(minter, minter, tokenContract, tokenId, expiryType, expiryValue);
+        vm.stopPrank();
+    }
+
+    function testStaticMetadata() public {
+        assertEq(ld.name(), "Liquid Delegate V2");
+        assertEq(ld.symbol(), "RIGHTSV2");
+        assertEq(ld.version(), "1");
+        assertEq(
+            ld.DOMAIN_SEPARATOR(),
+            keccak256(
+                abi.encode(
+                    keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                    keccak256(bytes(ld.name())),
+                    keccak256(bytes(ld.version())),
+                    block.chainid,
+                    address(ld)
+                )
             )
         );
-
-        // Create buyer order
-        orders[2] = _createBuyerOrder(buyer, 0, expectedETH, false);
-        orders[2].signature = "";
-
-        // Prepare & execute all orders
-        /* CriteriaResolver[] memory criteriaResolvers = new CriteriaResolver[](1);
-        criteriaResolvers[0] = CriteriaResolver({
-            orderIndex: 2,
-            side: Side.CONSIDERATION,
-            index: 0
-
-
-        }); */
-        Fulfillment[] memory fulfillments = new Fulfillment[](3);
-        // Seller NFT => Liquid Delegate V2
-        fulfillments[0] = _constructFulfillment(0, 0, 1, 0);
-        // Wrap Receipt => Seller
-        fulfillments[1] = _constructFulfillment(1, 0, 0, 1);
-        // Buyer ETH => Seller
-        fulfillments[2] = _constructFulfillment(2, 0, 0, 0);
-
-        vm.prank(buyer.addr);
-        seaport.matchAdvancedOrders{value: expectedETH}(orders, new CriteriaResolver[](0), fulfillments, buyer.addr);
     }
 
-    function testWrapOrderFilledBySeller() public {}
-
-    function _createSellerOrder(
-        User memory _user,
-        uint256 _tokenId,
-        uint256 _receiptId,
-        uint256 _expectedETH,
-        bool _expectReceipt
-    ) internal returns (AdvancedOrder memory) {
-        OfferItem[] memory offer = new OfferItem[](1);
-        offer[0] = OfferItem({
-            itemType: ItemType.ERC721,
-            token: address(token),
-            identifierOrCriteria: _tokenId,
-            startAmount: 1,
-            endAmount: 1
-        });
-        uint256 totalConsiders = _expectReceipt ? 2 : 1;
-        ConsiderationItem[] memory consideration = new ConsiderationItem[](totalConsiders);
-        consideration[0] = ConsiderationItem({
-            itemType: ItemType.NATIVE,
-            token: address(0),
-            identifierOrCriteria: 0,
-            startAmount: _expectedETH,
-            endAmount: _expectedETH,
-            recipient: payable(_user.addr)
-        });
-        if (_expectReceipt) {
-            consideration[1] = ConsiderationItem({
-                itemType: ItemType.ERC721,
-                token: address(liquidDelegateV2),
-                identifierOrCriteria: _receiptId,
-                startAmount: 1,
-                endAmount: 1,
-                recipient: payable(_user.addr)
-            });
-        }
-        OrderParameters memory orderParams = OrderParameters({
-            offerer: _user.addr,
-            zone: address(0),
-            offer: offer,
-            consideration: consideration,
-            orderType: OrderType.FULL_OPEN,
-            startTime: 0,
-            endTime: block.timestamp + 3 days,
-            zoneHash: bytes32(0),
-            salt: 1,
-            conduitKey: conduitKey,
-            totalOriginalConsiderationItems: totalConsiders
-        });
-        return AdvancedOrder({
-            parameters: orderParams,
-            numerator: 1,
-            denominator: 1,
-            signature: _expectReceipt ? _signOrder(_user, orderParams) : bytes(""),
-            extraData: ""
-        });
+    function randUser(uint256 i) internal view returns (address) {
+        return users[bound(i, 0, TOTAL_USERS - 1)];
     }
 
-    function _createDelegateContractOrder(
-        address _depositor,
-        uint256 _tokenId,
-        uint256 _receiptId,
-        bytes memory _context
-    ) internal view returns (AdvancedOrder memory) {
-        OfferItem[] memory offer = new OfferItem[](1);
-        offer[0] = OfferItem({
-            itemType: ItemType.ERC721,
-            token: address(liquidDelegateV2),
-            identifierOrCriteria: _receiptId,
-            startAmount: 1,
-            endAmount: 1
-        });
-        ConsiderationItem[] memory consideration = new ConsiderationItem[](1);
-        consideration[0] = ConsiderationItem({
-            itemType: ItemType.ERC721,
-            token: address(token),
-            identifierOrCriteria: _tokenId,
-            startAmount: 1,
-            endAmount: 1,
-            recipient: payable(address(liquidDelegateV2))
-        });
-        OrderParameters memory orderParams = OrderParameters({
-            offerer: address(liquidDelegateV2),
-            zone: address(0),
-            offer: offer,
-            consideration: consideration,
-            orderType: OrderType.CONTRACT,
-            startTime: 0,
-            endTime: block.timestamp + 3 days,
-            zoneHash: bytes32(0),
-            salt: 1,
-            conduitKey: conduitKey,
-            totalOriginalConsiderationItems: 1
-        });
-        return
-            AdvancedOrder({parameters: orderParams, numerator: 1, denominator: 1, signature: "", extraData: _context});
-    }
-
-    function _createBuyerOrder(User memory _user, uint256 _receiptId, uint256 _expectedETH, bool _expectReceipt)
+    function prepareValidExpiry(bool expiryTypeRelative, uint256 time)
         internal
-        returns (AdvancedOrder memory)
+        view
+        returns (ExpiryType, uint256, uint256)
     {
-        OfferItem[] memory offer = new OfferItem[](1);
-        offer[0] = OfferItem({
-            itemType: ItemType.NATIVE,
-            token: address(0),
-            identifierOrCriteria: 0,
-            startAmount: _expectedETH,
-            endAmount: _expectedETH
-        });
-        uint256 totalConsiders = _expectReceipt ? 1 : 0;
-        ConsiderationItem[] memory consideration = new ConsiderationItem[](totalConsiders);
-        /* consideration[0] = ConsiderationItem({
-            itemType: ItemType.ERC721_WITH_CRITERIA,
-            token: address(liquidDelegateV2),
-            identifierOrCriteria: 0,
-            startAmount: 1,
-            endAmount: 1,
-            recipient: payable(_user.addr)
-        }); */
-        if (_expectReceipt) {
-            consideration[0] = ConsiderationItem({
-                itemType: ItemType.ERC721,
-                token: address(liquidDelegateV2),
-                identifierOrCriteria: _receiptId,
-                startAmount: 1,
-                endAmount: 1,
-                recipient: payable(_user.addr)
-            });
-        }
-        OrderParameters memory orderParams = OrderParameters({
-            offerer: _user.addr,
-            zone: address(0),
-            offer: offer,
-            consideration: consideration,
-            orderType: OrderType.FULL_OPEN,
-            startTime: 0,
-            endTime: block.timestamp + 3 days,
-            zoneHash: bytes32(0),
-            salt: 1,
-            conduitKey: conduitKey,
-            totalOriginalConsiderationItems: totalConsiders
-        });
-        return AdvancedOrder({
-            parameters: orderParams,
-            numerator: 1,
-            denominator: 1,
-            signature: _expectReceipt ? _signOrder(_user, orderParams) : bytes(""),
-            extraData: ""
-        });
-    }
-
-    function _signOrder(User memory _user, OrderParameters memory _params) internal view returns (bytes memory) {
-        (, bytes32 seaportDomainSeparator,) = seaport.information();
-        return signOrder(_user, seaportDomainSeparator, _params, seaport.getCounter(_user.addr));
-    }
-
-    function _constructFulfillment(
-        uint256 _offerOrderIndex,
-        uint256 _offerItemIndex,
-        uint256 _considerationOrderIndex,
-        uint256 _considerationItemIndex
-    ) internal pure returns (Fulfillment memory) {
-        FulfillmentComponent[] memory offerComponents = new FulfillmentComponent[](1);
-        offerComponents[0] = FulfillmentComponent({orderIndex: _offerOrderIndex, itemIndex: _offerItemIndex});
-        FulfillmentComponent[] memory considerationComponents = new FulfillmentComponent[](1);
-        considerationComponents[0] =
-            FulfillmentComponent({orderIndex: _considerationOrderIndex, itemIndex: _considerationItemIndex});
-        return Fulfillment({offerComponents: offerComponents, considerationComponents: considerationComponents});
+        ExpiryType expiryType = expiryTypeRelative ? ExpiryType.Relative : ExpiryType.Absolute;
+        time = bound(time, block.timestamp + 1, type(uint40).max);
+        uint256 expiryValue = expiryType == ExpiryType.Relative ? time - block.timestamp : time;
+        return (expiryType, time, expiryValue);
     }
 }

@@ -5,7 +5,7 @@ import {BaseERC721} from "./lib/BaseERC721.sol";
 import {EIP712} from "solady/utils/EIP712.sol";
 import {Multicallable} from "solady/utils/Multicallable.sol";
 import {LDMetadataManager} from "./LDMetadataManager.sol";
-import {ILiquidDelegateV2, ExpiryType} from "./interfaces/ILiquidDelegateV2.sol";
+import {ILiquidDelegateV2, ExpiryType, Rights} from "./interfaces/ILiquidDelegateV2.sol";
 import {IERC165} from "openzeppelin-contracts/utils/introspection/IERC165.sol";
 
 import {SignatureCheckerLib} from "solady/utils/SignatureCheckerLib.sol";
@@ -23,21 +23,6 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     // TODO: Better names for users
     bytes32 internal constant RELATIVE_EXPIRY_TYPE_HASH = keccak256("Relative");
     bytes32 internal constant ABSOLUTE_EXPIRY_TYPE_HASH = keccak256("Absolute");
-
-    struct Rights {
-        address tokenContract;
-        uint40 expiry;
-        uint56 nonce;
-        uint256 tokenId;
-    }
-
-    error InvalidSignature();
-    error InvalidExpiryType();
-    error ExpiryTimeNotInFuture();
-    error WithdrawNotAvailable();
-    error UnderlyingMissing();
-
-    event TokenWrapped(address tokenContract, uint256 tokenId, uint256 expiry);
 
     uint256 internal constant BASE_RIGHTS_ID_MASK = 0xffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000;
     uint256 internal constant RIGHTS_ID_NONCE_BITSIZE = 56;
@@ -77,6 +62,10 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         return LDMetadataManager.symbol();
     }
 
+    function version() public pure returns (string memory) {
+        return "1";
+    }
+
     function tokenURI(uint256 rightsTokenId) public view override returns (string memory) {
         address owner = _ownerOf[rightsTokenId];
         if (owner == address(0)) revert NotMinted();
@@ -99,6 +88,12 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         return BaseERC721.supportsInterface(interfaceId) || LDMetadataManager.supportsInterface(interfaceId);
     }
 
+    function getRights(uint256 rightsId) external view returns (uint256 baseRightsId, Rights memory rights) {
+        baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
+        rights = _idsToRights[baseRightsId];
+        if (rights.tokenContract == address(0)) revert NoRights();
+    }
+
     function transferFrom(address from, address to, uint256 id) public override(BaseERC721, IERC721) {
         super.transferFrom(from, to, id);
 
@@ -119,7 +114,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
      * @notice Creates LD Token pair after token has been deposited. **Do not** attempt to use as normal wallet.
      */
     function mint(
-        address ldRecipient,
+        address delegateRecipient,
         address principalRecipient,
         address tokenContract,
         uint256 tokenId,
@@ -127,12 +122,12 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         uint256 expiryValue
     ) external returns (uint256) {
         if (IERC721(tokenContract).ownerOf(tokenId) != address(this)) revert UnderlyingMissing();
-        uint56 expiry = getExpiry(expiryType, expiryValue);
-        return _mint(ldRecipient, principalRecipient, tokenContract, tokenId, expiry);
+        uint40 expiry = getExpiry(expiryType, expiryValue);
+        return _mint(delegateRecipient, principalRecipient, tokenContract, tokenId, expiry);
     }
 
     function create(
-        address ldRecipient,
+        address delegateRecipient,
         address principalRecipient,
         address tokenContract,
         uint256 tokenId,
@@ -140,16 +135,26 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         uint256 expiryValue
     ) external returns (uint256) {
         IERC721(tokenContract).transferFrom(msg.sender, address(this), tokenId);
-        uint56 expiry = getExpiry(expiryType, expiryValue);
-        return _mint(ldRecipient, principalRecipient, tokenContract, tokenId, expiry);
+        uint40 expiry = getExpiry(expiryType, expiryValue);
+        return _mint(delegateRecipient, principalRecipient, tokenContract, tokenId, expiry);
+    }
+
+    function extend(uint256 rightsId, ExpiryType expiryType, uint256 expiryValue) external {
+        if (!PrincipalToken(PRINCIPAL_TOKEN).isApprovedOrOwner(msg.sender, rightsId)) revert NotAuthorized();
+        uint40 newExpiry = getExpiry(expiryType, expiryValue);
+        uint256 baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
+        uint40 currentExpiry = _idsToRights[baseRightsId].expiry;
+        if (newExpiry <= currentExpiry) revert NotExtending();
+        _idsToRights[baseRightsId].expiry = newExpiry;
+        emit RightsExtended(baseRightsId, uint56(rightsId), currentExpiry, newExpiry);
     }
 
     function _mint(
-        address ldRecipient,
+        address delegateRecipient,
         address principalRecipient,
         address tokenContract,
         uint256 tokenId,
-        uint56 expiry
+        uint40 expiry
     ) internal returns (uint256 rightsId) {
         uint256 baseRightsId = getBaseRightsId(tokenContract, tokenId);
         Rights storage rights = _idsToRights[baseRightsId];
@@ -165,20 +170,20 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
             rights.expiry = uint40(expiry);
         }
 
-        _mint(ldRecipient, rightsId);
+        _mint(delegateRecipient, rightsId);
         IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(
-            ldRecipient, rights.tokenContract, rights.tokenId, false
+            delegateRecipient, rights.tokenContract, rights.tokenId, true
         );
 
         PrincipalToken(PRINCIPAL_TOKEN).mint(principalRecipient, rightsId);
 
-        emit TokenWrapped(tokenContract, tokenId, expiry);
+        emit RightsCreated(baseRightsId, nonce, expiry);
     }
 
     function getExpiry(ExpiryType expiryType, uint256 expiryValue) public view returns (uint40 expiry) {
         if (expiryType == ExpiryType.Relative) {
             expiry = (block.timestamp + expiryValue).toUint40();
-        } else if (expiryType == ExpiryType.Relative) {
+        } else if (expiryType == ExpiryType.Absolute) {
             expiry = expiryValue.toUint40();
         } else {
             revert InvalidExpiryType();
@@ -217,6 +222,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         }
 
         _burn(rightsId);
+        emit RightsBurned(baseRightsId, nonce);
     }
 
     /// @dev Allows depositor to withdraw
@@ -239,6 +245,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         }
         PrincipalToken(PRINCIPAL_TOKEN).burnIfAuthorized(msg.sender, rightsId);
         _idsToRights[baseRightsId].nonce = nonce + 1;
+        emit UnderlyingWithdrawn(baseRightsId, nonce, to);
         IERC721(tokenContract).transferFrom(address(this), to, tokenId);
     }
 
@@ -247,6 +254,6 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     }
 
     function _domainNameAndVersion() internal pure override returns (string memory, string memory) {
-        return (name(), "1.0");
+        return (name(), version());
     }
 }

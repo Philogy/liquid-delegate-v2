@@ -81,7 +81,8 @@ abstract contract BaseERC721 is IERC721 {
     }
 
     function isApprovedOrOwner(address spender, uint256 id) public view virtual returns (bool) {
-        (bool approvedOrOwner,) = _isApprovedOrOwner(spender, id);
+        (bool approvedOrOwner, address owner) = _isApprovedOrOwner(spender, id);
+        if (owner == address(0)) revert NotMinted();
         return approvedOrOwner;
     }
 
