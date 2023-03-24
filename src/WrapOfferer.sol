@@ -20,7 +20,8 @@ contract WrapOfferer is IWrapOfferer, EIP712 {
     error IncorrectReceived();
     error InvalidExpiryType();
     error InvalidSignature();
-    error InvalidGhostTransfer();
+    error InvalidReceiptTransfer();
+    error InvalidReceiptId();
 
     uint256 internal constant EMPTY_RECEIPT_PLACEHOLDER = 1;
 
@@ -98,8 +99,7 @@ contract WrapOfferer is IWrapOfferer, EIP712 {
     }
 
     function getSeaportMetadata() external pure returns (string memory, Schema[] memory) {
-        Schema[] memory schemas = new Schema[](0);
-        return (name(), schemas);
+        return (name(), new Schema[](0));
     }
 
     // /// @dev Builds unique ERC-712 struct hash
@@ -135,7 +135,8 @@ contract WrapOfferer is IWrapOfferer, EIP712 {
     }
 
     function transferFrom(address from, address, uint256 id) public view {
-        if (from != address(this) || id == EMPTY_RECEIPT_PLACEHOLDER) revert InvalidGhostTransfer();
+        if (from != address(this) || id == EMPTY_RECEIPT_PLACEHOLDER) revert InvalidReceiptTransfer();
+        if (id != validatedReceiptId) revert InvalidReceiptId();
     }
 
     function _domainNameAndVersion() internal pure override returns (string memory, string memory) {

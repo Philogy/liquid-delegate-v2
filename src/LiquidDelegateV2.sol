@@ -67,8 +67,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     }
 
     function tokenURI(uint256 rightsTokenId) public view override returns (string memory) {
-        address owner = _ownerOf[rightsTokenId];
-        if (owner == address(0)) revert NotMinted();
+        if (_ownerOf[rightsTokenId] == address(0)) revert NotMinted();
         Rights memory rights = _idsToRights[rightsTokenId & BASE_RIGHTS_ID_MASK];
 
         address principalTokenOwner;

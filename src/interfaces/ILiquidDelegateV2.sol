@@ -43,6 +43,7 @@ interface ILiquidDelegateV2 is IERC721 {
                       VIEW & INTROSPECTION
     //////////////////////////////////////////////////////////////*/
 
+    function baseURI() external view returns (string memory);
     function DELEGATION_REGISTRY() external view returns (address);
     function PRINCIPAL_TOKEN() external view returns (address);
     function getRights(uint256 rightsId) external view returns (uint256 baseRightsId, Rights memory rights);
