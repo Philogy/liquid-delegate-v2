@@ -10,7 +10,6 @@ contract PrincipalToken is BaseERC721 {
     error NotLD();
 
     modifier onlyLD() {
-        // Purposefully use `msg.sender` and not forwarded `_msgSender()`.
         if (msg.sender != LD_CONTROLLER) revert NotLD();
         _;
     }
@@ -26,7 +25,9 @@ contract PrincipalToken is BaseERC721 {
     }
 
     function burnIfAuthorized(address burner, uint256 id) external onlyLD {
-        if (!isApprovedOrOwner(burner, id)) revert NotAuthorized();
+        // Owner != 0 check also done by `_burn`.
+        (bool approvedOrOwner,) = _isApprovedOrOwner(burner, id);
+        if (!approvedOrOwner) revert NotAuthorized();
         _burn(id);
     }
 
