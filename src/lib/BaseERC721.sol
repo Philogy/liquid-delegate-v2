@@ -30,28 +30,28 @@ abstract contract BaseERC721 is IERC721 {
                       ERC721 BALANCE/OWNER STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    mapping(uint256 => address) internal _ownerOf;
+    mapping(uint256 => address) internal $ownerOf;
 
-    mapping(address => uint256) internal _balanceOf;
+    mapping(address => uint256) internal $balanceOf;
 
     function ownerOf(uint256 id) public view virtual returns (address owner) {
-        if ((owner = _ownerOf[id]) == address(0)) revert NotMinted();
+        if ((owner = $ownerOf[id]) == address(0)) revert NotMinted();
     }
 
     function balanceOf(address owner) public view virtual returns (uint256) {
         if (owner == address(0)) revert ZeroAddress();
 
-        return _balanceOf[owner];
+        return $balanceOf[owner];
     }
 
     /*//////////////////////////////////////////////////////////////
                          ERC721 APPROVAL STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    mapping(uint256 => address) public getApproved;
+    mapping(uint256 => address) public $approved;
 
-    mapping(address => mapping(address => bool)) internal _isApprovedForAll;
-    mapping(address => uint256) internal _revokedDefault;
+    mapping(address => mapping(address => bool)) internal $isApprovedForAll;
+    mapping(address => uint256) internal $revokedDefault;
 
     /// @dev Static immutable variables used to save gas vs. storage array.
     uint256 internal constant TOTAL_DEFAULT_APPROVED = 3;
@@ -71,7 +71,7 @@ abstract contract BaseERC721 is IERC721 {
     }
 
     /*//////////////////////////////////////////////////////////////
-                     APPROVAL FOR ALL LOGIC
+                           ALLOWANCE
     //////////////////////////////////////////////////////////////*/
 
     function getDefaultApproved() public view returns (address[TOTAL_DEFAULT_APPROVED] memory defaultApproved) {
@@ -89,16 +89,16 @@ abstract contract BaseERC721 is IERC721 {
     function isApprovedForAll(address owner, address operator) public view virtual returns (bool) {
         uint256 defaultOperatorIndex = _getDefaultApprovedIndex(operator);
         return defaultOperatorIndex == TOTAL_DEFAULT_APPROVED
-            ? _isApprovedForAll[owner][operator]
-            : !_revokedDefault[owner].get(defaultOperatorIndex);
+            ? $isApprovedForAll[owner][operator]
+            : !$revokedDefault[owner].get(defaultOperatorIndex);
     }
 
     function setApprovalForAll(address operator, bool approved) public virtual {
         uint256 defaultOperatorIndex = _getDefaultApprovedIndex(operator);
         if (defaultOperatorIndex == TOTAL_DEFAULT_APPROVED) {
-            _isApprovedForAll[msg.sender][operator] = approved;
+            $isApprovedForAll[msg.sender][operator] = approved;
         } else {
-            _revokedDefault[msg.sender] = _revokedDefault[msg.sender].set(defaultOperatorIndex, !approved);
+            $revokedDefault[msg.sender] = $revokedDefault[msg.sender].set(defaultOperatorIndex, !approved);
         }
 
         emit ApprovalForAll(msg.sender, operator, approved);
@@ -110,8 +110,8 @@ abstract contract BaseERC721 is IERC721 {
         virtual
         returns (bool approvedOrOwner, address owner)
     {
-        owner = _ownerOf[id];
-        approvedOrOwner = spender == owner || isApprovedForAll(owner, spender) || getApproved[id] == spender;
+        owner = $ownerOf[id];
+        approvedOrOwner = spender == owner || isApprovedForAll(owner, spender) || $approved[id] == spender;
     }
 
     function _getDefaultApprovedIndex(address operator) internal view returns (uint256) {
@@ -126,19 +126,23 @@ abstract contract BaseERC721 is IERC721 {
         return i;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                              ERC721 LOGIC
-    //////////////////////////////////////////////////////////////*/
+    function getApproved(uint256 id) public view returns (address) {
+        return $approved[id];
+    }
 
     function approve(address spender, uint256 id) public virtual {
-        address owner = _ownerOf[id];
+        address owner = $ownerOf[id];
 
         if (msg.sender != owner && !isApprovedForAll(owner, msg.sender)) revert NotAuthorized();
 
-        getApproved[id] = spender;
+        $approved[id] = spender;
 
         emit Approval(owner, spender, id);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                              ERC721 LOGIC
+    //////////////////////////////////////////////////////////////*/
 
     function transferFrom(address from, address to, uint256 id) public virtual {
         (bool approvedOrOwner, address owner) = _isApprovedOrOwner(msg.sender, id);
@@ -149,14 +153,14 @@ abstract contract BaseERC721 is IERC721 {
         // Underflow of the sender's balance is impossible because we check for
         // ownership above and the recipient's balance can't realistically overflow.
         unchecked {
-            _balanceOf[from]--;
+            $balanceOf[from]--;
 
-            _balanceOf[to]++;
+            $balanceOf[to]++;
         }
 
-        _ownerOf[id] = to;
+        $ownerOf[id] = to;
 
-        delete getApproved[id];
+        delete $approved[id];
 
         emit Transfer(from, to, id);
     }
@@ -188,31 +192,31 @@ abstract contract BaseERC721 is IERC721 {
     function _mint(address to, uint256 id) internal virtual {
         if (to == address(0)) revert InvalidRecipient();
 
-        if (_ownerOf[id] != address(0)) revert AlreadyMinted();
+        if ($ownerOf[id] != address(0)) revert AlreadyMinted();
 
         // Counter overflow is incredibly unrealistic.
         unchecked {
-            _balanceOf[to]++;
+            $balanceOf[to]++;
         }
 
-        _ownerOf[id] = to;
+        $ownerOf[id] = to;
 
         emit Transfer(address(0), to, id);
     }
 
     function _burn(uint256 id) internal virtual {
-        address owner = _ownerOf[id];
+        address owner = $ownerOf[id];
 
         if (owner == address(0)) revert NotMinted();
 
         // Ownership check above ensures no underflow.
         unchecked {
-            _balanceOf[owner]--;
+            $balanceOf[owner]--;
         }
 
-        delete _ownerOf[id];
+        delete $ownerOf[id];
 
-        delete getApproved[id];
+        delete $approved[id];
 
         emit Transfer(owner, address(0), id);
     }

@@ -14,10 +14,10 @@ abstract contract LDMetadataManager is ERC2981, Owned, ILiquidDelegateV2 {
     using LibString for address;
     using LibString for uint256;
 
-    string public baseURI;
+    string internal $baseURI;
 
-    constructor(string memory _baseURI, address initialOwner) Owned(initialOwner) {
-        baseURI = _baseURI;
+    constructor(string memory baseURI_, address initialOwner) Owned(initialOwner) {
+        $baseURI = baseURI_;
     }
 
     function name() public pure virtual returns (string memory) {
@@ -28,17 +28,21 @@ abstract contract LDMetadataManager is ERC2981, Owned, ILiquidDelegateV2 {
         return "RIGHTSV2";
     }
 
+    function baseURI() public view returns (string memory) {
+        return $baseURI;
+    }
+
     function supportsInterface(bytes4 interfaceId) public view virtual override(ERC2981, IERC165) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
 
-    function setBaseURI(string memory _baseURI) external onlyOwner {
-        baseURI = _baseURI;
+    function setBaseURI(string memory baseURI_) external onlyOwner {
+        $baseURI = baseURI_;
     }
 
     /// @dev Returns contract-level metadata URI for OpenSea (reference)[https://docs.opensea.io/docs/contract-level-metadata]
     function contractURI() public view returns (string memory) {
-        return string.concat(baseURI, "contract");
+        return string.concat($baseURI, "contract");
     }
 
     function _buildTokenURI(address tokenContract, uint256 id, uint40 expiry, address principalOwner)
@@ -68,7 +72,7 @@ abstract contract LDMetadataManager is ERC2981, Owned, ILiquidDelegateV2 {
             status,
             '"}]',
             ',"image":"',
-            baseURI,
+            $baseURI,
             "rights/",
             idstr,
             '"}'

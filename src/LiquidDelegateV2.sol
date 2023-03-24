@@ -32,7 +32,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     address public immutable override DELEGATION_REGISTRY;
     address public immutable override PRINCIPAL_TOKEN;
 
-    mapping(uint256 => Rights) internal _idsToRights;
+    mapping(uint256 => Rights) internal $idsToRights;
 
     constructor(
         address _DELEGATION_REGISTRY,
@@ -67,8 +67,8 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     }
 
     function tokenURI(uint256 rightsTokenId) public view override returns (string memory) {
-        if (_ownerOf[rightsTokenId] == address(0)) revert NotMinted();
-        Rights memory rights = _idsToRights[rightsTokenId & BASE_RIGHTS_ID_MASK];
+        if ($ownerOf[rightsTokenId] == address(0)) revert NotMinted();
+        Rights memory rights = $idsToRights[rightsTokenId & BASE_RIGHTS_ID_MASK];
 
         address principalTokenOwner;
         try PrincipalToken(PRINCIPAL_TOKEN).ownerOf(rightsTokenId) returns (address retrievedOwner) {
@@ -89,7 +89,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
 
     function getRights(uint256 rightsId) external view returns (uint256 baseRightsId, Rights memory rights) {
         baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
-        rights = _idsToRights[baseRightsId];
+        rights = $idsToRights[baseRightsId];
         if (rights.tokenContract == address(0)) revert NoRights();
     }
 
@@ -98,8 +98,8 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
 
         uint256 baseRightsId = id & BASE_RIGHTS_ID_MASK;
         uint56 nonce = uint56(id);
-        if (_idsToRights[baseRightsId].nonce == nonce) {
-            Rights memory rights = _idsToRights[baseRightsId];
+        if ($idsToRights[baseRightsId].nonce == nonce) {
+            Rights memory rights = $idsToRights[baseRightsId];
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(from, rights.tokenContract, rights.tokenId, false);
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(to, rights.tokenContract, rights.tokenId, true);
         }
@@ -142,9 +142,9 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         if (!PrincipalToken(PRINCIPAL_TOKEN).isApprovedOrOwner(msg.sender, rightsId)) revert NotAuthorized();
         uint40 newExpiry = getExpiry(expiryType, expiryValue);
         uint256 baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
-        uint40 currentExpiry = _idsToRights[baseRightsId].expiry;
+        uint40 currentExpiry = $idsToRights[baseRightsId].expiry;
         if (newExpiry <= currentExpiry) revert NotExtending();
-        _idsToRights[baseRightsId].expiry = newExpiry;
+        $idsToRights[baseRightsId].expiry = newExpiry;
         emit RightsExtended(baseRightsId, uint56(rightsId), currentExpiry, newExpiry);
     }
 
@@ -156,13 +156,13 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         uint40 expiry
     ) internal returns (uint256 rightsId) {
         uint256 baseRightsId = getBaseRightsId(tokenContract, tokenId);
-        Rights storage rights = _idsToRights[baseRightsId];
+        Rights storage rights = $idsToRights[baseRightsId];
         uint56 nonce = rights.nonce;
         rightsId = baseRightsId | nonce;
 
         if (nonce == 0) {
             // First time rights for this token are set up, store everything.
-            _idsToRights[baseRightsId] =
+            $idsToRights[baseRightsId] =
                 Rights({tokenContract: tokenContract, expiry: uint40(expiry), nonce: 0, tokenId: tokenId});
         } else {
             // Rights already used once, so only need to update expiry.
@@ -213,8 +213,8 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
 
         uint256 baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
         uint56 nonce = uint56(rightsId);
-        if (_idsToRights[baseRightsId].nonce == nonce) {
-            Rights memory rights = _idsToRights[baseRightsId];
+        if ($idsToRights[baseRightsId].nonce == nonce) {
+            Rights memory rights = $idsToRights[baseRightsId];
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(
                 owner, rights.tokenContract, rights.tokenId, false
             );
@@ -232,18 +232,18 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     function withdrawTo(address to, uint56 nonce, address tokenContract, uint256 tokenId) public {
         uint256 baseRightsId = getBaseRightsId(tokenContract, tokenId);
         uint256 rightsId = baseRightsId | nonce;
-        address owner = _ownerOf[rightsId];
+        address owner = $ownerOf[rightsId];
         if (owner != address(0)) {
-            if (block.timestamp < _idsToRights[baseRightsId].expiry) {
+            if (block.timestamp < $idsToRights[baseRightsId].expiry) {
                 revert WithdrawNotAvailable();
             }
-            Rights memory rights = _idsToRights[baseRightsId];
+            Rights memory rights = $idsToRights[baseRightsId];
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(
                 owner, rights.tokenContract, rights.tokenId, false
             );
         }
         PrincipalToken(PRINCIPAL_TOKEN).burnIfAuthorized(msg.sender, rightsId);
-        _idsToRights[baseRightsId].nonce = nonce + 1;
+        $idsToRights[baseRightsId].nonce = nonce + 1;
         emit UnderlyingWithdrawn(baseRightsId, nonce, to);
         IERC721(tokenContract).transferFrom(address(this), to, tokenId);
     }

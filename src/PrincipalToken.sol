@@ -52,7 +52,7 @@ contract PrincipalToken is BaseERC721 {
     }
 
     function tokenURI(uint256 id) public view override returns (string memory) {
-        if (_ownerOf[id] == address(0)) revert NotMinted();
+        if ($ownerOf[id] == address(0)) revert NotMinted();
 
         ILiquidDelegateV2 ld = ILiquidDelegateV2(LIQUID_DELEGATE);
 

@@ -40,7 +40,7 @@ contract WrapOfferer is IWrapOfferer, EIP712 {
     address public immutable SEAPORT;
     address public immutable LIQUID_DELEGATE;
 
-    uint256 internal validatedReceiptId = EMPTY_RECEIPT_PLACEHOLDER;
+    uint256 internal $validatedReceiptId = EMPTY_RECEIPT_PLACEHOLDER;
 
     constructor(address _SEAPORT, address _LQUID_DELEGATE) {
         SEAPORT = _SEAPORT;
@@ -57,7 +57,7 @@ contract WrapOfferer is IWrapOfferer, EIP712 {
     ) external returns (SpentItem[] memory, ReceivedItem[] memory) {
         (SpentItem[] memory offer, ReceivedItem[] memory consideration, bytes32 validatedReceiptHash) =
             _wrapAsOrder(msg.sender, minimumOut.length, maximumReceived, context);
-        validatedReceiptId = uint256(validatedReceiptHash);
+        $validatedReceiptId = uint256(validatedReceiptHash);
 
         return (offer, consideration);
     }
@@ -76,7 +76,7 @@ contract WrapOfferer is IWrapOfferer, EIP712 {
         (address tokenContract, uint256 tokenId) = _getTokenFromSpends(inSpends);
 
         // Remove validated receipt
-        validatedReceiptId = EMPTY_RECEIPT_PLACEHOLDER;
+        $validatedReceiptId = EMPTY_RECEIPT_PLACEHOLDER;
 
         // `LiquidDelegateV2.mint` checks whether the appropriate NFT has been deposited.
         ILiquidDelegateV2(LIQUID_DELEGATE).mint(
@@ -136,7 +136,7 @@ contract WrapOfferer is IWrapOfferer, EIP712 {
 
     function transferFrom(address from, address, uint256 id) public view {
         if (from != address(this) || id == EMPTY_RECEIPT_PLACEHOLDER) revert InvalidReceiptTransfer();
-        if (id != validatedReceiptId) revert InvalidReceiptId();
+        if (id != $validatedReceiptId) revert InvalidReceiptId();
     }
 
     function _domainNameAndVersion() internal pure override returns (string memory, string memory) {
