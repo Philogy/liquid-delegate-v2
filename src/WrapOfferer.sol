@@ -214,6 +214,7 @@ contract WrapOfferer is IWrapOfferer, EIP712 {
             expiryType,
             expiryValue
         );
+        // `isValidSignatureNow` returns `false` if `signer` is `address(0)`.
         if (!SignatureCheckerLib.isValidSignatureNow(signer, _hashTypedData(receiptHash), signature)) {
             revert InvalidSignature();
         }

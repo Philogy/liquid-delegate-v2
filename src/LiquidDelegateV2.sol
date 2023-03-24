@@ -14,15 +14,14 @@ import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
 import {IERC721} from "openzeppelin-contracts/token/ERC721/IERC721.sol";
 import {IDelegationRegistry} from "./interfaces/IDelegationRegistry.sol";
 import {PrincipalToken} from "./PrincipalToken.sol";
+import {INFTFlashBorrower} from "./interfaces/INFTFlashBorrower.sol";
 
 /// @author philogy <https://github.com/philogy>
 /// @dev V2 of Liquid Delegate
 contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallable, LDMetadataManager {
     using SafeCastLib for uint256;
 
-    // TODO: Better names for users
-    bytes32 internal constant RELATIVE_EXPIRY_TYPE_HASH = keccak256("Relative");
-    bytes32 internal constant ABSOLUTE_EXPIRY_TYPE_HASH = keccak256("Absolute");
+    bytes32 public constant FLASHLOAN_CALLBACK_MAGIC = bytes32(uint256(keccak256("LiquidDelegate.v2.onFlashLoan")) - 1);
 
     uint256 internal constant BASE_RIGHTS_ID_MASK = 0xffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000;
     uint256 internal constant RIGHTS_ID_NONCE_BITSIZE = 56;
@@ -87,7 +86,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         return BaseERC721.supportsInterface(interfaceId) || LDMetadataManager.supportsInterface(interfaceId);
     }
 
-    function getRights(uint256 rightsId) external view returns (uint256 baseRightsId, Rights memory rights) {
+    function getRights(uint256 rightsId) public view returns (uint256 baseRightsId, Rights memory rights) {
         baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
         rights = $idsToRights[baseRightsId];
         if (rights.tokenContract == address(0)) revert NoRights();
@@ -103,6 +102,21 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(from, rights.tokenContract, rights.tokenId, false);
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(to, rights.tokenContract, rights.tokenId, true);
         }
+    }
+
+    function flashLoan(address receiver, uint256 rightsId, address tokenContract, uint256 tokenId, bytes calldata data)
+        external
+    {
+        if (!PrincipalToken(PRINCIPAL_TOKEN).isApprovedOrOwner(msg.sender, rightsId)) revert NotAuthorized();
+        if (getBaseRightsId(tokenContract, tokenId) != rightsId & BASE_RIGHTS_ID_MASK) revert InvalidFlashloan();
+        IERC721(tokenContract).transferFrom(address(this), receiver, tokenId);
+
+        if (
+            INFTFlashBorrower(receiver).onFlashLoan(msg.sender, tokenContract, tokenId, data)
+                != FLASHLOAN_CALLBACK_MAGIC
+        ) revert InvalidFlashloan();
+
+        if (IERC721(tokenContract).ownerOf(tokenId) != address(this)) revert InvalidFlashloan();
     }
 
     /*//////////////////////////////////////////////////////////////

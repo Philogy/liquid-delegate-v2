@@ -48,7 +48,7 @@ abstract contract BaseERC721 is IERC721 {
                          ERC721 APPROVAL STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    mapping(uint256 => address) public $approved;
+    mapping(uint256 => address) internal $approved;
 
     mapping(address => mapping(address => bool)) internal $isApprovedForAll;
     mapping(address => uint256) internal $revokedDefault;

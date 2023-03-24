@@ -29,6 +29,7 @@ interface ILiquidDelegateV2 is IERC721 {
     error NotExtending();
     error NoRights();
     error NotContract();
+    error InvalidFlashloan();
 
     /*//////////////////////////////////////////////////////////////
                              EVENTS
@@ -82,4 +83,11 @@ interface ILiquidDelegateV2 is IERC721 {
 
     function withdraw(uint56 nonce, address tokenContract, uint256 tokenId) external;
     function withdrawTo(address to, uint56 nonce, address tokenContract, uint256 tokenId) external;
+
+    /*//////////////////////////////////////////////////////////////
+                       FLASHLOAN METHODS
+    //////////////////////////////////////////////////////////////*/
+
+    function flashLoan(address receiver, uint256 rightsId, address tokenContract, uint256 tokenId, bytes calldata data)
+        external;
 }
