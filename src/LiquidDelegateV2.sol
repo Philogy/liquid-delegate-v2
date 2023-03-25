@@ -198,7 +198,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2Base, BaseERC721, EIP712, Multical
     /// @dev Allow owner of wrapped token to release early
     /// @notice Does not return underlying to principal token owner
     function burn(uint256 rightsId) external {
-        _burn(msg.sender, rightsId);
+        _burnAuth(msg.sender, rightsId);
     }
 
     function burnWithPermit(address spender, uint256 rightsId, bytes calldata sig) external {
@@ -209,24 +209,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2Base, BaseERC721, EIP712, Multical
         ) {
             revert InvalidSignature();
         }
-        _burn(spender, rightsId);
-    }
-
-    function _burn(address spender, uint256 rightsId) internal {
-        (bool approvedOrOwner, address owner) = _isApprovedOrOwner(spender, rightsId);
-        if (!approvedOrOwner) revert NotAuthorized();
-
-        uint256 baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
-        uint56 nonce = uint56(rightsId);
-        if (_idsToRights[baseRightsId].nonce == nonce) {
-            Rights memory rights = _idsToRights[baseRightsId];
-            IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(
-                owner, rights.tokenContract, rights.tokenId, false
-            );
-        }
-
-        _burn(rightsId);
-        emit RightsBurned(baseRightsId, nonce);
+        _burnAuth(spender, rightsId);
     }
 
     /// @dev Allows depositor to withdraw
@@ -237,17 +220,17 @@ contract LiquidDelegateV2 is ILiquidDelegateV2Base, BaseERC721, EIP712, Multical
     function withdrawTo(address to, uint56 nonce, address tokenContract, uint256 tokenId) public {
         uint256 baseRightsId = getBaseRightsId(tokenContract, tokenId);
         uint256 rightsId = baseRightsId | nonce;
+        PrincipalToken(PRINCIPAL_TOKEN).burnIfAuthorized(msg.sender, rightsId);
+
+        // Check whether the delegate token still exists.
         address owner = _ownerOf[rightsId];
         if (owner != address(0)) {
+            // If it still exists the only valid way to withdraw is the delegation having expired.
             if (block.timestamp < _idsToRights[baseRightsId].expiry) {
                 revert WithdrawNotAvailable();
             }
-            Rights memory rights = _idsToRights[baseRightsId];
-            IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(
-                owner, rights.tokenContract, rights.tokenId, false
-            );
+            _burn(owner, rightsId);
         }
-        PrincipalToken(PRINCIPAL_TOKEN).burnIfAuthorized(msg.sender, rightsId);
         _idsToRights[baseRightsId].nonce = nonce + 1;
         emit UnderlyingWithdrawn(baseRightsId, nonce, to);
         IERC721(tokenContract).transferFrom(address(this), to, tokenId);
@@ -255,6 +238,23 @@ contract LiquidDelegateV2 is ILiquidDelegateV2Base, BaseERC721, EIP712, Multical
 
     function getBaseRightsId(address tokenContract, uint256 tokenId) public pure returns (uint256) {
         return uint256(keccak256(abi.encode(tokenContract, tokenId))) & BASE_RIGHTS_ID_MASK;
+    }
+
+    function _burnAuth(address spender, uint256 rightsId) internal {
+        (bool approvedOrOwner, address owner) = _isApprovedOrOwner(spender, rightsId);
+        if (!approvedOrOwner) revert NotAuthorized();
+        _burn(owner, rightsId);
+    }
+
+    function _burn(address owner, uint256 rightsId) internal {
+        uint256 baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
+        uint56 nonce = uint56(rightsId);
+
+        Rights memory rights = _idsToRights[baseRightsId];
+        IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(owner, rights.tokenContract, rights.tokenId, false);
+
+        _burn(rightsId);
+        emit RightsBurned(baseRightsId, nonce);
     }
 
     function _domainNameAndVersion() internal pure override returns (string memory, string memory) {

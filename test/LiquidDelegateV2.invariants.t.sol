@@ -49,6 +49,7 @@ contract LiquidDelegateV2Invariants is Test, InvariantTest {
         selectors.push(handler.burnLdToken.selector);
         selectors.push(handler.withdrawExpired.selector);
         selectors.push(handler.withdrawBurned.selector);
+        selectors.push(handler.extend.selector);
 
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
 
@@ -116,10 +117,10 @@ contract LiquidDelegateV2Invariants is Test, InvariantTest {
     }
 
     function noDuplicatePrBaseRightsId(uint256 prId) external {
-        // `forEach` iterates over whole set so need to skip the item that's being compared itself
+        // `forEach` iterates over whole set so need to skip the item itself.
         if (prId != currentPrId) {
-            (uint baseRightsId1, , ) = ld.getRights(prId);
-            (uint baseRightsId2, , ) = ld.getRights(currentPrId);
+            (uint256 baseRightsId1,,) = ld.getRights(prId);
+            (uint256 baseRightsId2,,) = ld.getRights(currentPrId);
             assertTrue(baseRightsId1 != baseRightsId2);
         }
     }

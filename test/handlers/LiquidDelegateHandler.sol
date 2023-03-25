@@ -9,6 +9,7 @@ import {console} from "forge-std/console.sol";
 import {AddressSet, TokenSet, UintSet, SetsLib} from "../utils/SetsLib.sol";
 import {MockERC721} from "../mock/MockERC721.sol";
 import {LibString} from "solady/utils/LibString.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
 
 import {ILiquidDelegateV2, ExpiryType, Rights} from "src/interfaces/ILiquidDelegateV2.sol";
 import {PrincipalToken} from "src/PrincipalToken.sol";
@@ -16,12 +17,16 @@ import {PrincipalToken} from "src/PrincipalToken.sol";
 /// @author philogy <https://github.com/philogy>
 contract LiquidDelegateHandler is CommonBase, StdCheats, StdUtils {
     using LibString for address;
+    using LibString for uint256;
 
     using SetsLib for AddressSet;
     using SetsLib for TokenSet;
     using SetsLib for UintSet;
 
+    using SafeCastLib for uint256;
+
     ILiquidDelegateV2 public immutable liquidDelegate;
+    PrincipalToken public immutable principal;
     uint256 internal constant TOTAL_TOKENS = 10;
 
     mapping(bytes32 => uint256) public calls;
@@ -61,6 +66,7 @@ contract LiquidDelegateHandler is CommonBase, StdCheats, StdUtils {
 
     constructor(address ld) {
         liquidDelegate = ILiquidDelegateV2(ld);
+        principal = PrincipalToken(ILiquidDelegateV2(ld).PRINCIPAL_TOKEN());
         for (uint256 i; i < TOTAL_TOKENS; i++) {
             tokenContracts.add(address(new MockERC721(uint(keccak256(abi.encode("start_id", i))))));
         }
@@ -138,16 +144,23 @@ contract LiquidDelegateHandler is CommonBase, StdCheats, StdUtils {
     {
         uint256 prId = ownedPrTokens[currentActor].get(prSeed);
 
-        if (prId != 0) {
-            (,, Rights memory rights) = liquidDelegate.getRights(prId);
-            vm.warp(rights.expiry);
-            vm.startPrank(currentActor);
-            liquidDelegate.withdraw(rights.nonce, rights.tokenContract, rights.tokenId);
-            vm.stopPrank();
+        if (prId == 0) return;
 
-            existingPrincipalTokens.remove(prId);
-            ownedPrTokens[currentActor].remove(prId);
-            depositedTokens.remove(rights.tokenContract, rights.tokenId);
+        address ldOwner = _getLDOwner(prId);
+
+        (,, Rights memory rights) = liquidDelegate.getRights(prId);
+        vm.warp(rights.expiry);
+        vm.startPrank(currentActor);
+        liquidDelegate.withdraw(rights.nonce, rights.tokenContract, rights.tokenId);
+        vm.stopPrank();
+
+        existingPrincipalTokens.remove(prId);
+        ownedPrTokens[currentActor].remove(prId);
+        depositedTokens.remove(rights.tokenContract, rights.tokenId);
+
+        if (ldOwner != address(0)) {
+            existingDelegateTokens.remove(prId);
+            ownedLdTokens[ldOwner].remove(prId);
         }
     }
 
@@ -159,10 +172,7 @@ contract LiquidDelegateHandler is CommonBase, StdCheats, StdUtils {
         uint256 prId = ownedPrTokens[currentActor].get(prSeed);
         if (prId == 0) return;
 
-        address ldOwner;
-        try liquidDelegate.ownerOf(prId) returns (address retrievedOwner) {
-            ldOwner = retrievedOwner;
-        } catch {}
+        address ldOwner = _getLDOwner(prId);
         if (ldOwner != address(0)) {
             vm.prank(ldOwner);
             liquidDelegate.burn(prId);
@@ -180,6 +190,27 @@ contract LiquidDelegateHandler is CommonBase, StdCheats, StdUtils {
         depositedTokens.remove(rights.tokenContract, rights.tokenId);
     }
 
+    function extend(uint256 prSeed, uint8 rawExpiryType, uint40 expiryValue) public countCall("extend") {
+        uint256 prId = existingPrincipalTokens.get(prSeed);
+        if (prId == 0) return;
+
+        (,, Rights memory rights) = liquidDelegate.getRights(prId);
+
+        ExpiryType expiryType =
+            ExpiryType(bound(rawExpiryType, uint256(type(ExpiryType).min), uint256(type(ExpiryType).max)).toUint8());
+
+        uint256 minTime = (rights.expiry > block.timestamp ? rights.expiry : block.timestamp) + 1;
+        uint256 maxTime = expiryType == ExpiryType.Relative ? type(uint40).max - block.timestamp : type(uint40).max;
+        // No possible extension
+        if (maxTime < minTime) return;
+
+        expiryValue = bound(expiryValue, minTime, maxTime).toUint40();
+
+        address owner = principal.ownerOf(prId);
+        vm.prank(owner);
+        liquidDelegate.extend(prId, expiryType, expiryValue);
+    }
+
     function callSummary() external view {
         console.log("Call summary:");
         console.log("------------------");
@@ -188,6 +219,7 @@ contract LiquidDelegateHandler is CommonBase, StdCheats, StdUtils {
         console.log("ld_burn", calls["ld_burn"]);
         console.log("withdraw_expired", calls["withdraw_expired"]);
         console.log("withdraw_burned", calls["withdraw_burned"]);
+        console.log("extend", calls["extend"]);
         if (messages.length > 0) console.log("messages:");
         for (uint256 i; i < messages.length; i++) {
             console.log(messages[i]);
@@ -197,6 +229,18 @@ contract LiquidDelegateHandler is CommonBase, StdCheats, StdUtils {
     function _mintToken(uint256 tokenSeed, address recipient) internal returns (address token, uint256 id) {
         token = tokenContracts.get(tokenSeed);
         id = MockERC721(token).mintNext(recipient);
+    }
+
+    function _getLDOwner(uint256 ldId) internal view returns (address owner) {
+        try liquidDelegate.ownerOf(ldId) returns (address retrievedOwner) {
+            owner = retrievedOwner;
+        } catch {}
+    }
+
+    function _getPrOwner(uint256 prId) internal view returns (address owner) {
+        try principal.ownerOf(prId) returns (address retrievedOwner) {
+            owner = retrievedOwner;
+        } catch {}
     }
 
     function forEachDepositedToken(function(address, uint) external func) public {
