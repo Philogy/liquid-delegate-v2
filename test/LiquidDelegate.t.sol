@@ -50,7 +50,7 @@ contract LiquidDelegateTest is Test {
         );
         vm.stopPrank();
 
-        token = new MockERC721();
+        token = new MockERC721(0);
 
         for (uint256 i; i < TOTAL_USERS; i++) {
             users[i] = makeAddr(string.concat("user", (i + 1).toString()));
@@ -84,7 +84,8 @@ contract LiquidDelegateTest is Test {
         assertEq(ld.ownerOf(rightsId), ldTo);
         assertEq(principal.ownerOf(rightsId), principalTo);
 
-        (uint256 baseRightsId, Rights memory rights) = ld.getRights(rightsId);
+        (uint256 baseRightsId, uint256 activeRightsId, Rights memory rights) = ld.getRights(rightsId);
+        assertEq(activeRightsId, rightsId);
         assertEq(baseRightsId, ld.getBaseRightsId(address(token), tokenId));
         assertEq(uint256(bytes32(bytes25(bytes32(rightsId)))), baseRightsId);
         assertEq(rights.nonce, 0);

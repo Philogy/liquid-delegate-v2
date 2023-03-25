@@ -56,7 +56,7 @@ contract PrincipalToken is BaseERC721 {
 
         ILiquidDelegateV2 ld = ILiquidDelegateV2(LIQUID_DELEGATE);
 
-        (, Rights memory rights) = ld.getRights(id);
+        (,, Rights memory rights) = ld.getRights(id);
 
         string memory idstr = rights.tokenId.toString();
         string memory imageUrl = string.concat(ld.baseURI(), "principal/", idstr);

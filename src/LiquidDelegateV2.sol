@@ -86,9 +86,14 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         return BaseERC721.supportsInterface(interfaceId) || LDMetadataManager.supportsInterface(interfaceId);
     }
 
-    function getRights(uint256 rightsId) public view returns (uint256 baseRightsId, Rights memory rights) {
+    function getRights(uint256 rightsId)
+        public
+        view
+        returns (uint256 baseRightsId, uint256 activeRightsId, Rights memory rights)
+    {
         baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
         rights = $idsToRights[baseRightsId];
+        activeRightsId = baseRightsId | rights.nonce;
         if (rights.tokenContract == address(0)) revert NoRights();
     }
 
@@ -263,7 +268,7 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     }
 
     function getBaseRightsId(address tokenContract, uint256 tokenId) public pure returns (uint256) {
-        return uint256(keccak256(abi.encode(tokenContract, tokenId))) << RIGHTS_ID_NONCE_BITSIZE;
+        return uint256(keccak256(abi.encode(tokenContract, tokenId))) & BASE_RIGHTS_ID_MASK;
     }
 
     function _domainNameAndVersion() internal pure override returns (string memory, string memory) {

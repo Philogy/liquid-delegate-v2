@@ -9,4 +9,12 @@ viaIR = true
 [fuzz]
 # runs = 250000
 
+[invariant]
+runs = 400
+depth = 40
+fail_on_revert = false
+dictionary_weight = 80
+include_storage = true
+include_push_bytes = true
+
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config
