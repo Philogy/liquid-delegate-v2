@@ -21,10 +21,6 @@ contract LiquidDelegateV2Invariants is Test, InvariantTest {
     address internal coreDeployer = makeAddr("coreDeployer");
     address internal ldOwner = makeAddr("ldOwner");
 
-    address internal seaport = makeAddr("seaport");
-    address internal conduit = makeAddr("conduit");
-    address internal urouter = makeAddr("urouter");
-
     LiquidDelegateHandler internal handler;
 
     bytes4[] internal selectors;
@@ -36,22 +32,16 @@ contract LiquidDelegateV2Invariants is Test, InvariantTest {
         vm.startPrank(coreDeployer);
         ld = new LiquidDelegateV2(
             address(registry),
-            seaport,
-            conduit,
-            urouter,
             LibRLP.computeAddress(coreDeployer, vm.getNonce(coreDeployer) + 1),
             "",
             ldOwner
         );
         principal = new PrincipalToken(
-            address(ld),
-            seaport,
-            conduit,
-            urouter
+            address(ld)
         );
         vm.stopPrank();
 
-        handler = new LiquidDelegateHandler(ld);
+        handler = new LiquidDelegateHandler(address(ld));
 
         // Add target selectors.
         selectors.push(handler.createLdToken.selector);

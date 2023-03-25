@@ -59,8 +59,8 @@ contract LiquidDelegateHandler is CommonBase, StdCheats, StdUtils {
         _;
     }
 
-    constructor(ILiquidDelegateV2 ld) {
-        liquidDelegate = ld;
+    constructor(address ld) {
+        liquidDelegate = ILiquidDelegateV2(ld);
         for (uint256 i; i < TOTAL_TOKENS; i++) {
             tokenContracts.add(address(new MockERC721(uint(keccak256(abi.encode("start_id", i))))));
         }

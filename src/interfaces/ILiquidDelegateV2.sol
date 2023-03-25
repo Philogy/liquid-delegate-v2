@@ -16,7 +16,7 @@ struct Rights {
 }
 
 /// @author philogy <https://github.com/philogy>
-interface ILiquidDelegateV2 is IERC721 {
+interface ILiquidDelegateV2Base {
     /*//////////////////////////////////////////////////////////////
                              ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -45,6 +45,7 @@ interface ILiquidDelegateV2 is IERC721 {
     //////////////////////////////////////////////////////////////*/
 
     function baseURI() external view returns (string memory);
+
     function DELEGATION_REGISTRY() external view returns (address);
     function PRINCIPAL_TOKEN() external view returns (address);
     function getRights(uint256 rightsId)
@@ -94,3 +95,5 @@ interface ILiquidDelegateV2 is IERC721 {
     function flashLoan(address receiver, uint256 rightsId, address tokenContract, uint256 tokenId, bytes calldata data)
         external;
 }
+
+interface ILiquidDelegateV2 is IERC721, ILiquidDelegateV2Base {}

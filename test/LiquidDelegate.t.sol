@@ -22,10 +22,6 @@ contract LiquidDelegateTest is Test {
     address coreDeployer = makeAddr("coreDeployer");
     address ldOwner = makeAddr("ldOwner");
 
-    address seaport = makeAddr("seaport");
-    address conduit = makeAddr("conduit");
-    address urouter = makeAddr("urouter");
-
     uint256 internal constant TOTAL_USERS = 100;
     address[TOTAL_USERS] internal users;
 
@@ -35,18 +31,12 @@ contract LiquidDelegateTest is Test {
         vm.startPrank(coreDeployer);
         ld = new LiquidDelegateV2(
             address(registry),
-            seaport,
-            conduit,
-            urouter,
             LibRLP.computeAddress(coreDeployer, vm.getNonce(coreDeployer) + 1),
             "",
             ldOwner
         );
         principal = new PrincipalToken(
-            address(ld),
-            seaport,
-            conduit,
-            urouter
+            address(ld)
         );
         vm.stopPrank();
 

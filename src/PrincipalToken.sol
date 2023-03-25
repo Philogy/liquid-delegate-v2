@@ -9,7 +9,7 @@ import {LibString} from "solady/utils/LibString.sol";
 import {Base64} from "solady/utils/Base64.sol";
 
 /// @author philogy <https://github.com/philogy>
-contract PrincipalToken is BaseERC721 {
+contract PrincipalToken is BaseERC721("Prinicipal Tokens (LiquidDelegate V2)", "LDP") {
     using LibString for uint256;
     using LibString for address;
 
@@ -22,9 +22,7 @@ contract PrincipalToken is BaseERC721 {
         _;
     }
 
-    constructor(address _LIQUID_DELEGATE, address defaultApproved1, address defaultApproved2, address defaultApproved3)
-        BaseERC721(defaultApproved1, defaultApproved2, defaultApproved3)
-    {
+    constructor(address _LIQUID_DELEGATE) {
         LIQUID_DELEGATE = _LIQUID_DELEGATE;
     }
 
@@ -43,16 +41,8 @@ contract PrincipalToken is BaseERC721 {
                         METADATA METHODS
     //////////////////////////////////////////////////////////////*/
 
-    function name() public pure override returns (string memory) {
-        return "Prinicipal Tokens (LiquidDelegate V2)";
-    }
-
-    function symbol() public pure override returns (string memory) {
-        return "LDP";
-    }
-
     function tokenURI(uint256 id) public view override returns (string memory) {
-        if ($ownerOf[id] == address(0)) revert NotMinted();
+        if (_ownerOf[id] == address(0)) revert NotMinted();
 
         ILiquidDelegateV2 ld = ILiquidDelegateV2(LIQUID_DELEGATE);
 
@@ -71,7 +61,7 @@ contract PrincipalToken is BaseERC721 {
 
         string memory metadataString = string.concat(
             '{"name":"',
-            string.concat(name(), " #", idstr),
+            string.concat(name, " #", idstr),
             '","description":"LiquidDelegate lets you escrow your token for a chosen timeperiod and receive a liquid NFT representing the associated delegation rights. This collection represents the principal i.e. the future right to claim the underlying token once the associated delegate token expires.","attributes":[{"trait_type":"Collection Address","value":"',
             rights.tokenContract.toHexStringChecksumed(),
             '"},{"trait_type":"Token ID","value":"',

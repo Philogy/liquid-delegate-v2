@@ -5,20 +5,21 @@ import {BaseERC721} from "./lib/BaseERC721.sol";
 import {EIP712} from "solady/utils/EIP712.sol";
 import {Multicallable} from "solady/utils/Multicallable.sol";
 import {LDMetadataManager} from "./LDMetadataManager.sol";
-import {ILiquidDelegateV2, ExpiryType, Rights} from "./interfaces/ILiquidDelegateV2.sol";
+import {ILiquidDelegateV2Base, ExpiryType, Rights} from "./interfaces/ILiquidDelegateV2.sol";
 import {IERC165} from "openzeppelin-contracts/utils/introspection/IERC165.sol";
 
 import {SignatureCheckerLib} from "solady/utils/SignatureCheckerLib.sol";
 import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
 
 import {IERC721} from "openzeppelin-contracts/token/ERC721/IERC721.sol";
+import {ERC721} from "solmate/tokens/ERC721.sol";
 import {IDelegationRegistry} from "./interfaces/IDelegationRegistry.sol";
 import {PrincipalToken} from "./PrincipalToken.sol";
 import {INFTFlashBorrower} from "./interfaces/INFTFlashBorrower.sol";
 
 /// @author philogy <https://github.com/philogy>
 /// @dev V2 of Liquid Delegate
-contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallable, LDMetadataManager {
+contract LiquidDelegateV2 is ILiquidDelegateV2Base, BaseERC721, EIP712, Multicallable, LDMetadataManager {
     using SafeCastLib for uint256;
 
     bytes32 public constant FLASHLOAN_CALLBACK_MAGIC = bytes32(uint256(keccak256("LiquidDelegate.v2.onFlashLoan")) - 1);
@@ -31,20 +32,14 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     address public immutable override DELEGATION_REGISTRY;
     address public immutable override PRINCIPAL_TOKEN;
 
-    mapping(uint256 => Rights) internal $idsToRights;
+    mapping(uint256 => Rights) internal _idsToRights;
 
     constructor(
         address _DELEGATION_REGISTRY,
-        address _SEAPORT,
-        address _OPENSEA_CONDUIT,
-        address _UNISWAP_UNIVERSAL_ROUTER,
         address _PRINCIPAL_TOKEN,
         string memory _baseURI,
         address initialMetadataOwner
-    )
-        BaseERC721(_SEAPORT, _OPENSEA_CONDUIT, _UNISWAP_UNIVERSAL_ROUTER)
-        LDMetadataManager(_baseURI, initialMetadataOwner)
-    {
+    ) BaseERC721(_name(), _symbol()) LDMetadataManager(_baseURI, initialMetadataOwner) {
         DELEGATION_REGISTRY = _DELEGATION_REGISTRY;
         PRINCIPAL_TOKEN = _PRINCIPAL_TOKEN;
     }
@@ -53,21 +48,17 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         return _domainSeparator();
     }
 
-    function name() public pure override(BaseERC721, LDMetadataManager) returns (string memory) {
-        return LDMetadataManager.name();
-    }
-
-    function symbol() public pure override(BaseERC721, LDMetadataManager) returns (string memory) {
-        return LDMetadataManager.symbol();
-    }
-
     function version() public pure returns (string memory) {
         return "1";
     }
 
+    function baseURI() public view override(ILiquidDelegateV2Base, LDMetadataManager) returns (string memory) {
+        return LDMetadataManager.baseURI();
+    }
+
     function tokenURI(uint256 rightsTokenId) public view override returns (string memory) {
-        if ($ownerOf[rightsTokenId] == address(0)) revert NotMinted();
-        Rights memory rights = $idsToRights[rightsTokenId & BASE_RIGHTS_ID_MASK];
+        if (_ownerOf[rightsTokenId] == address(0)) revert NotMinted();
+        Rights memory rights = _idsToRights[rightsTokenId & BASE_RIGHTS_ID_MASK];
 
         address principalTokenOwner;
         try PrincipalToken(PRINCIPAL_TOKEN).ownerOf(rightsTokenId) returns (address retrievedOwner) {
@@ -77,13 +68,8 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         return _buildTokenURI(rights.tokenContract, rights.tokenId, rights.expiry, principalTokenOwner);
     }
 
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(BaseERC721, LDMetadataManager, IERC165)
-        returns (bool)
-    {
-        return BaseERC721.supportsInterface(interfaceId) || LDMetadataManager.supportsInterface(interfaceId);
+    function supportsInterface(bytes4 interfaceId) public view override(LDMetadataManager, ERC721) returns (bool) {
+        return ERC721.supportsInterface(interfaceId) || LDMetadataManager.supportsInterface(interfaceId);
     }
 
     function getRights(uint256 rightsId)
@@ -92,18 +78,18 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         returns (uint256 baseRightsId, uint256 activeRightsId, Rights memory rights)
     {
         baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
-        rights = $idsToRights[baseRightsId];
+        rights = _idsToRights[baseRightsId];
         activeRightsId = baseRightsId | rights.nonce;
         if (rights.tokenContract == address(0)) revert NoRights();
     }
 
-    function transferFrom(address from, address to, uint256 id) public override(BaseERC721, IERC721) {
+    function transferFrom(address from, address to, uint256 id) public override {
         super.transferFrom(from, to, id);
 
         uint256 baseRightsId = id & BASE_RIGHTS_ID_MASK;
         uint56 nonce = uint56(id);
-        if ($idsToRights[baseRightsId].nonce == nonce) {
-            Rights memory rights = $idsToRights[baseRightsId];
+        if (_idsToRights[baseRightsId].nonce == nonce) {
+            Rights memory rights = _idsToRights[baseRightsId];
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(from, rights.tokenContract, rights.tokenId, false);
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(to, rights.tokenContract, rights.tokenId, true);
         }
@@ -161,9 +147,9 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         if (!PrincipalToken(PRINCIPAL_TOKEN).isApprovedOrOwner(msg.sender, rightsId)) revert NotAuthorized();
         uint40 newExpiry = getExpiry(expiryType, expiryValue);
         uint256 baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
-        uint40 currentExpiry = $idsToRights[baseRightsId].expiry;
+        uint40 currentExpiry = _idsToRights[baseRightsId].expiry;
         if (newExpiry <= currentExpiry) revert NotExtending();
-        $idsToRights[baseRightsId].expiry = newExpiry;
+        _idsToRights[baseRightsId].expiry = newExpiry;
         emit RightsExtended(baseRightsId, uint56(rightsId), currentExpiry, newExpiry);
     }
 
@@ -175,13 +161,13 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
         uint40 expiry
     ) internal returns (uint256 rightsId) {
         uint256 baseRightsId = getBaseRightsId(tokenContract, tokenId);
-        Rights storage rights = $idsToRights[baseRightsId];
+        Rights storage rights = _idsToRights[baseRightsId];
         uint56 nonce = rights.nonce;
         rightsId = baseRightsId | nonce;
 
         if (nonce == 0) {
             // First time rights for this token are set up, store everything.
-            $idsToRights[baseRightsId] =
+            _idsToRights[baseRightsId] =
                 Rights({tokenContract: tokenContract, expiry: uint40(expiry), nonce: 0, tokenId: tokenId});
         } else {
             // Rights already used once, so only need to update expiry.
@@ -232,8 +218,8 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
 
         uint256 baseRightsId = rightsId & BASE_RIGHTS_ID_MASK;
         uint56 nonce = uint56(rightsId);
-        if ($idsToRights[baseRightsId].nonce == nonce) {
-            Rights memory rights = $idsToRights[baseRightsId];
+        if (_idsToRights[baseRightsId].nonce == nonce) {
+            Rights memory rights = _idsToRights[baseRightsId];
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(
                 owner, rights.tokenContract, rights.tokenId, false
             );
@@ -251,18 +237,18 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     function withdrawTo(address to, uint56 nonce, address tokenContract, uint256 tokenId) public {
         uint256 baseRightsId = getBaseRightsId(tokenContract, tokenId);
         uint256 rightsId = baseRightsId | nonce;
-        address owner = $ownerOf[rightsId];
+        address owner = _ownerOf[rightsId];
         if (owner != address(0)) {
-            if (block.timestamp < $idsToRights[baseRightsId].expiry) {
+            if (block.timestamp < _idsToRights[baseRightsId].expiry) {
                 revert WithdrawNotAvailable();
             }
-            Rights memory rights = $idsToRights[baseRightsId];
+            Rights memory rights = _idsToRights[baseRightsId];
             IDelegationRegistry(DELEGATION_REGISTRY).delegateForToken(
                 owner, rights.tokenContract, rights.tokenId, false
             );
         }
         PrincipalToken(PRINCIPAL_TOKEN).burnIfAuthorized(msg.sender, rightsId);
-        $idsToRights[baseRightsId].nonce = nonce + 1;
+        _idsToRights[baseRightsId].nonce = nonce + 1;
         emit UnderlyingWithdrawn(baseRightsId, nonce, to);
         IERC721(tokenContract).transferFrom(address(this), to, tokenId);
     }
@@ -272,6 +258,6 @@ contract LiquidDelegateV2 is ILiquidDelegateV2, BaseERC721, EIP712, Multicallabl
     }
 
     function _domainNameAndVersion() internal pure override returns (string memory, string memory) {
-        return (name(), version());
+        return (_name(), version());
     }
 }
