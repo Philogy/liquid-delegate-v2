@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.17;
+pragma solidity ^0.8.19;
 
 import {BaseERC721} from "./lib/BaseERC721.sol";
 import {EIP712} from "solady/utils/EIP712.sol";
 import {Multicallable} from "solady/utils/Multicallable.sol";
 import {LDMetadataManager} from "./LDMetadataManager.sol";
 import {ILiquidDelegateV2Base, ExpiryType, Rights} from "./interfaces/ILiquidDelegateV2.sol";
-import {IERC165} from "openzeppelin-contracts/utils/introspection/IERC165.sol";
 
 import {SignatureCheckerLib} from "solady/utils/SignatureCheckerLib.sol";
 import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
@@ -107,6 +106,8 @@ contract LiquidDelegateV2 is ILiquidDelegateV2Base, BaseERC721, EIP712, Multical
                 != FLASHLOAN_CALLBACK_MAGIC
         ) revert InvalidFlashloan();
 
+        // Safer and cheaper to expect the token to have been returned rather than pulling it with
+        // `transferFrom`.
         if (IERC721(tokenContract).ownerOf(tokenId) != address(this)) revert InvalidFlashloan();
     }
 
