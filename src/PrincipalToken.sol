@@ -9,7 +9,7 @@ import {LibString} from "solady/utils/LibString.sol";
 import {Base64} from "solady/utils/Base64.sol";
 
 /// @author philogy <https://github.com/philogy>
-contract PrincipalToken is BaseERC721("Prinicipal Tokens (LiquidDelegate V2)", "LDP") {
+contract PrincipalToken is BaseERC721("Principal (LiquidDelegate V2)", "LDP") {
     using LibString for uint256;
     using LibString for address;
 

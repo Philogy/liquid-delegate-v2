@@ -218,6 +218,20 @@ contract LiquidDelegateTest is Test {
         );
     }
 
+    function testTokenURI() public {
+        uint id = 9827;
+        address user = makeAddr("user");
+        token.mint(address(ld), id);
+        vm.prank(user);
+        uint rightsId = ld.mint(user, user, address(token), id, ExpiryType.Relative, 10 seconds);
+
+        vm.prank(ldOwner);
+        ld.setBaseURI("https://test-uri.com/");
+
+        emit log_named_string("delegate tokenURI:", ld.tokenURI(rightsId));
+        emit log_named_string("principal tokenURI:", principal.tokenURI(rightsId));
+    }
+
     function randUser(uint256 i) internal view returns (address) {
         return users[bound(i, 0, TOTAL_USERS - 1)];
     }
