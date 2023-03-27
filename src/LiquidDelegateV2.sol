@@ -44,7 +44,6 @@ contract LiquidDelegateV2 is ILiquidDelegateV2Base, BaseERC721, EIP712, Multical
         PRINCIPAL_TOKEN = _PRINCIPAL_TOKEN;
     }
 
-
     /*//////////////////////////////////////////////////////////////
     /            LIQUID DELEGATE TOKEN METHODS                     /
     //////////////////////////////////////////////////////////////*/
@@ -80,10 +79,9 @@ contract LiquidDelegateV2 is ILiquidDelegateV2Base, BaseERC721, EIP712, Multical
         if (getBaseRightsId(tokenContract, tokenId) != rightsId & BASE_RIGHTS_ID_MASK) revert InvalidFlashloan();
         ERC721(tokenContract).transferFrom(address(this), to, tokenId);
 
-        if (
-            INFTFlashBorrower(to).onFlashLoan(msg.sender, tokenContract, tokenId, data)
-                != FLASHLOAN_CALLBACK_MAGIC
-        ) revert InvalidFlashloan();
+        if (INFTFlashBorrower(to).onFlashLoan(msg.sender, tokenContract, tokenId, data) != FLASHLOAN_CALLBACK_MAGIC) {
+            revert InvalidFlashloan();
+        }
 
         // Safer and cheaper to expect the token to have been returned rather than pulling it with
         // `transferFrom`.

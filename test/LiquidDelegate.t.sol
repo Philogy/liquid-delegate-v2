@@ -219,11 +219,11 @@ contract LiquidDelegateTest is Test {
     }
 
     function testTokenURI() public {
-        uint id = 9827;
+        uint256 id = 9827;
         address user = makeAddr("user");
         token.mint(address(ld), id);
         vm.prank(user);
-        uint rightsId = ld.mint(user, user, address(token), id, ExpiryType.Relative, 10 seconds);
+        uint256 rightsId = ld.mint(user, user, address(token), id, ExpiryType.Relative, 10 seconds);
 
         vm.prank(ldOwner);
         ld.setBaseURI("https://test-uri.com/");

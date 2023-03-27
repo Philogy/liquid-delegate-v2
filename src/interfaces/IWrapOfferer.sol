@@ -21,8 +21,11 @@ interface IWrapOfferer is ContractOffererInterface {
         address token,
         uint256 id,
         ExpiryType expiryType,
-        uint256 expiryValue
+        uint256 expiryValue,
+        uint40 nonce
     ) external view returns (bytes32 receiptHash);
+
+    function getNonceUsed(address owner, uint256 nonce) external view returns (bool);
 
     function encodeContext(
         ReceiptFillerType fillerType,
@@ -30,6 +33,7 @@ interface IWrapOfferer is ContractOffererInterface {
         uint40 expiryValue,
         address delegateRecipient,
         address principalRecipient,
+        uint40 nonce,
         bytes memory signature
     ) external view returns (bytes memory);
 
@@ -42,6 +46,7 @@ interface IWrapOfferer is ContractOffererInterface {
             uint40 expiryValue,
             address delegateRecipient,
             address principalRecipient,
+            uint40 nonce,
             bytes memory signature
         );
 }

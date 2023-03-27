@@ -59,9 +59,11 @@ contract WrapOffererTest is Test, BaseSeaportTest, BaseLiquidDelegateTest, Seapo
         vm.deal(buyer.addr, expectedETH);
         uint256 tokenId = 69;
         token.mint(seller.addr, tokenId);
+        uint40 sellerNonce = 0;
         // 2. Create and sign wrap receipt
-        bytes32 receiptHash =
-            wofferer.getReceiptHash(address(0), seller.addr, address(token), tokenId, expiryType, expiryValue);
+        bytes32 receiptHash = wofferer.getReceiptHash(
+            address(0), seller.addr, address(token), tokenId, expiryType, expiryValue, sellerNonce
+        );
         (bytes memory receiptSig,) = signERC712(seller, wofferer.DOMAIN_SEPARATOR(), receiptHash);
         // 3. Build Order
         orders[0] = _createSellerOrder(seller, tokenId, uint256(receiptHash), expectedETH, false);
@@ -71,7 +73,13 @@ contract WrapOffererTest is Test, BaseSeaportTest, BaseLiquidDelegateTest, Seapo
             tokenId,
             uint256(receiptHash),
             wofferer.encodeContext(
-                ReceiptFillerType.DelegateOpen, expiryType, uint40(expiryValue), buyer.addr, seller.addr, receiptSig
+                ReceiptFillerType.DelegateOpen,
+                expiryType,
+                uint40(expiryValue),
+                buyer.addr,
+                seller.addr,
+                sellerNonce,
+                receiptSig
             )
         );
 
@@ -107,6 +115,7 @@ contract WrapOffererTest is Test, BaseSeaportTest, BaseLiquidDelegateTest, Seapo
         uint40 inExpiryValue,
         address inDelegateRecipient,
         address inPrincipalRecipient,
+        uint40 inNonce,
         bytes memory inSig
     ) public {
         ReceiptFillerType inFillerType = ReceiptFillerType(
@@ -121,10 +130,11 @@ contract WrapOffererTest is Test, BaseSeaportTest, BaseLiquidDelegateTest, Seapo
             uint40 outExpiryValue,
             address outDelegateRecipient,
             address outPrincipalRecipient,
+            uint40 outNonce,
             bytes memory outSig
         ) = wofferer.decodeContext(
             wofferer.encodeContext(
-                inFillerType, inExpiryType, inExpiryValue, inDelegateRecipient, inPrincipalRecipient, inSig
+                inFillerType, inExpiryType, inExpiryValue, inDelegateRecipient, inPrincipalRecipient, inNonce, inSig
             )
         );
         assertEq(uint8(inFillerType), uint8(outFillerType));
@@ -132,6 +142,7 @@ contract WrapOffererTest is Test, BaseSeaportTest, BaseLiquidDelegateTest, Seapo
         assertEq(inExpiryValue, outExpiryValue);
         assertEq(inDelegateRecipient, outDelegateRecipient);
         assertEq(inPrincipalRecipient, outPrincipalRecipient);
+        assertEq(inNonce, outNonce);
         assertEq(inSig, outSig);
     }
 
@@ -157,9 +168,11 @@ contract WrapOffererTest is Test, BaseSeaportTest, BaseLiquidDelegateTest, Seapo
         weth.approve(address(conduit), type(uint256).max);
         uint256 tokenId = 34;
         token.mint(seller.addr, tokenId);
+        uint40 buyerNonce = 0;
         // 2. Create and sign wrap receipt
-        bytes32 receiptHash =
-            wofferer.getReceiptHash(buyer.addr, address(0), address(token), tokenId, expiryType, expiryValue);
+        bytes32 receiptHash = wofferer.getReceiptHash(
+            buyer.addr, address(0), address(token), tokenId, expiryType, expiryValue, buyerNonce
+        );
 
         (bytes memory receiptSig,) = signERC712(buyer, wofferer.DOMAIN_SEPARATOR(), receiptHash);
         // 3. Build Order
@@ -170,7 +183,13 @@ contract WrapOffererTest is Test, BaseSeaportTest, BaseLiquidDelegateTest, Seapo
             tokenId,
             uint256(receiptHash),
             wofferer.encodeContext(
-                ReceiptFillerType.PrincipalOpen, expiryType, uint40(expiryValue), buyer.addr, seller.addr, receiptSig
+                ReceiptFillerType.PrincipalOpen,
+                expiryType,
+                uint40(expiryValue),
+                buyer.addr,
+                seller.addr,
+                buyerNonce,
+                receiptSig
             )
         );
 
