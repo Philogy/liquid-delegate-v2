@@ -48,10 +48,17 @@ interface ILiquidDelegateV2Base {
 
     function DELEGATION_REGISTRY() external view returns (address);
     function PRINCIPAL_TOKEN() external view returns (address);
+
+    function getRights(address tokenContract, uint256 tokenId)
+        external
+        view
+        returns (uint256 baseRightsId, uint256 activeRightsId, Rights memory rights);
     function getRights(uint256 rightsId)
         external
         view
         returns (uint256 baseRightsId, uint256 activeRightsId, Rights memory rights);
+
+    function getBaseRightsId(address tokenContract, uint256 tokenId) external pure returns (uint256);
     function getExpiry(ExpiryType expiryType, uint256 expiryValue) external view returns (uint40);
 
     /*//////////////////////////////////////////////////////////////

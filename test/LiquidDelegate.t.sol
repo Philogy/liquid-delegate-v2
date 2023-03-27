@@ -128,6 +128,60 @@ contract LiquidDelegateTest is Test {
         vm.stopPrank();
     }
 
+    function test_fuzzingMintRights(
+        address tokenOwner,
+        address ldTo,
+        address notLdTo,
+        address principalTo,
+        uint256 tokenId,
+        bool expiryTypeRelative,
+        uint256 time
+    ) public {
+        vm.assume(tokenOwner != address(0));
+        vm.assume(ldTo != address(0));
+        vm.assume(principalTo != address(0));
+        vm.assume(notLdTo != ldTo);
+
+        (ExpiryType expiryType, uint256 expiry, uint256 expiryValue) = prepareValidExpiry(expiryTypeRelative, time);
+
+        token.mint(tokenOwner, tokenId);
+        vm.startPrank(tokenOwner);
+        token.transferFrom(tokenOwner, address(ld), tokenId);
+
+        uint256 rightsId = ld.mint(ldTo, principalTo, address(token), tokenId, expiryType, expiryValue);
+
+        vm.stopPrank();
+
+        assertEq(ld.ownerOf(rightsId), ldTo);
+        assertEq(principal.ownerOf(rightsId), principalTo);
+
+        (uint256 baseRightsId, uint256 activeRightsId, Rights memory rights) = ld.getRights(rightsId);
+        assertEq(activeRightsId, rightsId);
+        assertEq(baseRightsId, ld.getBaseRightsId(address(token), tokenId));
+        assertEq(uint256(bytes32(bytes25(bytes32(rightsId)))), baseRightsId);
+        assertEq(rights.nonce, 0);
+        assertEq(rights.tokenContract, address(token));
+        assertEq(rights.tokenId, tokenId);
+        assertEq(rights.expiry, expiry);
+
+        assertTrue(registry.checkDelegateForToken(ldTo, address(ld), address(token), tokenId));
+        assertFalse(registry.checkDelegateForToken(notLdTo, address(ld), address(token), tokenId));
+    }
+
+    function testCannotMintWithExisting() public {
+        address tokenOwner = makeAddr("tokenOwner");
+        uint256 tokenId = token.mintNext(tokenOwner);
+        vm.startPrank(tokenOwner);
+        token.setApprovalForAll(address(ld), true);
+        ld.create(tokenOwner, tokenOwner, address(token), tokenId, ExpiryType.Relative, 10 days);
+        vm.stopPrank();
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert();
+        ld.mint(attacker, attacker, address(token), tokenId, ExpiryType.Relative, 5 days);
+    }
+
     function test_fuzzingCannotCreateWithNonexistentContract(
         address minter,
         address tokenContract,

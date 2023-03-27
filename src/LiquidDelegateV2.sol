@@ -71,6 +71,17 @@ contract LiquidDelegateV2 is ILiquidDelegateV2Base, BaseERC721, EIP712, Multical
         return ERC721.supportsInterface(interfaceId) || LDMetadataManager.supportsInterface(interfaceId);
     }
 
+    function getRights(address tokenContract, uint256 tokenId)
+        public
+        view
+        returns (uint256 baseRightsId, uint256 activeRightsId, Rights memory rights)
+    {
+        baseRightsId = getBaseRightsId(tokenContract, tokenId);
+        rights = _idsToRights[baseRightsId];
+        activeRightsId = baseRightsId | rights.nonce;
+        if (rights.tokenContract == address(0)) revert NoRights();
+    }
+
     function getRights(uint256 rightsId)
         public
         view

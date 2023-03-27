@@ -3,44 +3,20 @@ pragma solidity ^0.8.19;
 
 import {Test} from "forge-std/Test.sol";
 import {InvariantTest} from "forge-std/InvariantTest.sol";
+import {BaseLiquidDelegateTest} from "./base/BaseLiquidDelegateTest.sol";
 
-import {LibRLP} from "solady/utils/LibRLP.sol";
 import {LiquidDelegateHandler} from "./handlers/LiquidDelegateHandler.sol";
-import {LiquidDelegateV2, Rights} from "src/LiquidDelegateV2.sol";
-import {PrincipalToken} from "src/PrincipalToken.sol";
-import {DelegationRegistry} from "src/DelegationRegistry.sol";
+import {Rights} from "src/LiquidDelegateV2.sol";
 
 import {IERC721} from "openzeppelin-contracts/token/ERC721/IERC721.sol";
 
 /// @author philogy <https://github.com/philogy>
-contract LiquidDelegateV2Invariants is Test, InvariantTest {
-    DelegationRegistry internal registry;
-    PrincipalToken internal principal;
-    LiquidDelegateV2 internal ld;
-
-    address internal coreDeployer = makeAddr("coreDeployer");
-    address internal ldOwner = makeAddr("ldOwner");
-
+contract LiquidDelegateV2Invariants is Test, InvariantTest, BaseLiquidDelegateTest {
     LiquidDelegateHandler internal handler;
 
     bytes4[] internal selectors;
 
     function setUp() public {
-        // Deploy contracts.
-        registry = new DelegationRegistry();
-
-        vm.startPrank(coreDeployer);
-        ld = new LiquidDelegateV2(
-            address(registry),
-            LibRLP.computeAddress(coreDeployer, vm.getNonce(coreDeployer) + 1),
-            "",
-            ldOwner
-        );
-        principal = new PrincipalToken(
-            address(ld)
-        );
-        vm.stopPrank();
-
         handler = new LiquidDelegateHandler(address(ld));
 
         // Add target selectors.

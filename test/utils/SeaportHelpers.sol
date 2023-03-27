@@ -23,17 +23,18 @@ abstract contract SeaportHelpers is Test {
     function signERC712(User memory _user, bytes32 _domainSeparator, bytes32 _structHash)
         internal
         pure
-        returns (bytes memory)
+        returns (bytes memory sig, bytes32 erc721Hash)
     {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(_user.key, _domainSeparator.erc712DigestOf(_structHash));
-        return abi.encodePacked(r, s, v);
+        erc721Hash = _domainSeparator.erc712DigestOf(_structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(_user.key, erc721Hash);
+        sig = abi.encodePacked(r, s, v);
     }
 
     function signOrder(User memory _user, bytes32 _domainSeparator, OrderParameters memory _orderParams, uint256 _nonce)
         internal
         pure
-        returns (bytes memory)
+        returns (bytes memory sig)
     {
-        return signERC712(_user, _domainSeparator, _orderParams.hash(_nonce));
+        (sig,) = signERC712(_user, _domainSeparator, _orderParams.hash(_nonce));
     }
 }
