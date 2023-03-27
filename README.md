@@ -131,5 +131,13 @@ nonce are sequential and do not have to be invalidated in that order. Any nonce 
 time but importantly only once. Whether a certain a nonce has already been invalidated can be
 checkecd by calling `WrapOfferer.getNonceUsed(address owner, uint256 nonce)`.
 
+#### Contract Offer Context
+As part of contract orders Seaport requires providing context data in the `extraData` field. For the
+`WrapOfferer` contract the context contains the necessary data to reconstruct and validate the
+receipt. The extra data can be constructed or interpreted by calling the `WrapOfferer`'s
+`encodeContext(...)` and `decodeContext(bytes)` methods.
+
 See the [`./test/WrapOfferer.t.sol`](./test/WrapOfferer.t.sol) file for examples on how to use the
 contract offerer.
+
+
