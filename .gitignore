@@ -1,5 +1,6 @@
 cache/
 out/
 broadcast/
+docs/
 Makefile
 .DS_Store
